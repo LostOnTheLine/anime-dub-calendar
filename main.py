@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import re
 import os
 import json
+import hashlib
 
 # Scrape the forum post
 url = "https://myanimelist.net/forum/?topicid=1692966"
@@ -54,46 +55,77 @@ service = build("calendar", "v3", credentials=creds)
 calendar_id = os.getenv("CALENDAR_ID")
 print(f"Calendar ID: {calendar_id}")
 
-# Clear existing events
+# Color assignment
+available_colors = ["1", "2", "3", "4", "5", "6", "7", "9", "10", "11"]  # Exclude grey (8)
+suspended_color = "8"  # Grey for suspended shows
+
+def get_color_id(show_name, day_shows, used_colors):
+    hash_value = int(hashlib.md5(show_name.encode()).hexdigest(), 16)
+    color_index = hash_value % len(available_colors)
+    base_color = available_colors[color_index]
+    if base_color in used_colors and len(used_colors) < len(available_colors):
+        for color in available_colors:
+            if color not in used_colors:
+                return color
+    return base_color
+
+# Clear only future events
+current_date = datetime.now()
+time_min = current_date.isoformat() + "Z"  # Only events starting now or later
 page_token = None
 while True:
-    events = service.events().list(calendarId=calendar_id, pageToken=page_token).execute()
+    events = service.events().list(calendarId=calendar_id, timeMin=time_min, pageToken=page_token).execute()
     for event in events["items"]:
         service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
     page_token = events.get("nextPageToken")
     if not page_token:
         break
 
-# Add events
+# Add all-day events
 def next_weekday(start_date, weekday):
     days_ahead = weekday - start_date.weekday()
     if days_ahead <= 0:
         days_ahead += 7
     return start_date + timedelta(days=days_ahead)
 
-current_date = datetime.now()
 for day, shows in schedule.items():
     day_index = day_map[day]
+    used_colors = set()
+    
     for show in shows:
         latest_episode = show["current"]
-        total_ep = show["total"] or 999
+        total_ep = show["total"] or 10  # Cap at 10 future episodes if unknown
         base_date = next_weekday(current_date, day_index)
         
-        for ep in range(latest_episode + 1, min(total_ep + 1, latest_episode + 5)):
-            ep_date = next_weekday(current_date, day_index) + timedelta(weeks=(ep - latest_episode - 1))
-            start_time = ep_date.replace(hour=12, minute=0, second=0, microsecond=0)
-            end_time = start_time + timedelta(hours=1)
-            event = {
-                "summary": f"{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
-                "start": {"dateTime": start_time.isoformat() + "Z", "timeZone": "UTC"},
-                "end": {"dateTime": end_time.isoformat() + "Z", "timeZone": "UTC"},
-                "colorId": "10"
-            }
-            if show["suspended"]:
-                event["summary"] = f"{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]"
-                event["description"] = "** = Dub production suspended until further notice."
-                event["colorId"] = "8"
-            print(f"Inserting event: {json.dumps(event, indent=2)}")
-            service.events().insert(calendarId=calendar_id, body=event).execute()
+        color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
+        if not show["suspended"]:
+            used_colors.add(color_id)
+
+        if show["suspended"]:
+            # Recurring all-day event for suspended shows (future only)
+            if base_date >= current_date.date():
+                event = {
+                    "summary": f"{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]",
+                    "description": "** = Dub production suspended until further notice.",
+                    "start": {"date": base_date.strftime("%Y-%m-%d")},
+                    "end": {"date": base_date.strftime("%Y-%m-%d")},
+                    "recurrence": ["RRULE:FREQ=WEEKLY"],
+                    "colorId": color_id
+                }
+                print(f"Inserting event: {json.dumps(event, indent=2)}")
+                service.events().insert(calendarId=calendar_id, body=event).execute()
+        else:
+            # All-day event for each remaining episode (future only)
+            for ep in range(latest_episode + 1, min(total_ep + 1, latest_episode + 11)):
+                ep_date = base_date + timedelta(weeks=(ep - latest_episode - 1))
+                if ep_date >= current_date.date():
+                    event = {
+                        "summary": f"{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
+                        "start": {"date": ep_date.strftime("%Y-%m-%d")},
+                        "end": {"date": ep_date.strftime("%Y-%m-%d")},
+                        "colorId": color_id
+                    }
+                    print(f"Inserting event: {json.dumps(event, indent=2)}")
+                    service.events().insert(calendarId=calendar_id, body=event).execute()
 
 print("Calendar updated successfully!")
