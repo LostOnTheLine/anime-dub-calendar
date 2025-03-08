@@ -52,6 +52,7 @@ credentials_dict = json.loads(credentials_json)
 creds = service_account.Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
 service = build("calendar", "v3", credentials=creds)
 calendar_id = os.getenv("CALENDAR_ID")
+print(f"Calendar ID: {calendar_id}")
 
 # Clear existing events
 page_token = None
@@ -90,6 +91,7 @@ for day, shows in schedule.items():
                 event["summary"] = f"{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]"
                 event["description"] = "** = Dub production suspended until further notice."
                 event["colorId"] = "8"
+            print(f"Inserting event: {json.dumps(event, indent=2)}")
             service.events().insert(calendarId=calendar_id, body=event).execute()
 
 print("Calendar updated successfully!")
