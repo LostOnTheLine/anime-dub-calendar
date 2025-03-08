@@ -24,7 +24,7 @@ if first_comment is None:
 print(f"First comment snippet: {first_comment.text[:200]}")
 lines = first_comment.text.strip().split("\n")
 
-# Parse the text
+# Parse ongoing schedule
 schedule = {}
 current_day = None
 day_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
@@ -46,6 +46,29 @@ for line in lines:
                 "suspended": suspended == "**"
             })
 
+# Parse upcoming sections
+upcoming = []
+current_section = None
+date_pattern = re.compile(r"(\w+ \d{1,2}, \d{4})")
+
+for line in lines:
+    line = line.strip()
+    if "Upcoming SimulDubbed Anime for Winter 2025" in line or "Upcoming SimulDubbed Anime for Spring 2025" in line or "Upcoming Dubbed Anime" in line:
+        current_section = line
+    elif line and current_section and not line.startswith("* -"):
+        match = date_pattern.search(line)
+        title = line.split(" - ")[0].strip() if " - " in line else line.strip()
+        is_theatrical = title.endswith("*")
+        if is_theatrical:
+            title = title.rstrip("*").strip()
+        date_str = match.group(1) if match else None
+        upcoming.append({
+            "title": title,
+            "date": date_str,
+            "theatrical": is_theatrical,
+            "section": current_section
+        })
+
 # Google Calendar setup
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 credentials_json = os.getenv("GOOGLE_CREDENTIALS")
@@ -56,8 +79,9 @@ calendar_id = os.getenv("CALENDAR_ID")
 print(f"Calendar ID: {calendar_id}")
 
 # Color assignment
-available_colors = ["1", "2", "3", "4", "5", "6", "7", "9", "10", "11"]  # Exclude grey (8)
-suspended_color = "8"  # Grey for suspended shows
+available_colors = ["1", "2", "3", "5", "6", "7", "9", "10"]  # Exclude Flamingo (4) and Tomato (11)
+suspended_color = "4"  # Flamingo for suspended shows
+upcoming_color = "11"  # Tomato for upcoming events
 
 def get_color_id(show_name, day_shows, used_colors):
     hash_value = int(hashlib.md5(show_name.encode()).hexdigest(), 16)
@@ -71,21 +95,21 @@ def get_color_id(show_name, day_shows, used_colors):
 
 # Clear only future events
 current_date = datetime.now()
-today = current_date.date()  # Use date object for comparisons
+today = current_date.date()
 page_token = None
 while True:
     events = service.events().list(calendarId=calendar_id, pageToken=page_token).execute()
     for event in events["items"]:
         start = event["start"].get("date") or event["start"].get("dateTime")
         if start:
-            event_date = datetime.strptime(start[:10], "%Y-%m-%d").date()  # Extract YYYY-MM-DD
+            event_date = datetime.strptime(start[:10], "%Y-%m-%d").date()
             if event_date >= today:
                 service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
     page_token = events.get("nextPageToken")
     if not page_token:
         break
 
-# Add all-day events
+# Add all-day events for ongoing schedule
 def next_weekday(start_date, weekday):
     days_ahead = weekday - start_date.weekday()
     if days_ahead <= 0:
@@ -98,7 +122,7 @@ for day, shows in schedule.items():
     
     for show in shows:
         latest_episode = show["current"]
-        total_ep = show["total"] or 10  # Cap at 10 future episodes if unknown
+        total_ep = show["total"] or 10
         base_date = next_weekday(current_date, day_index)
         
         color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
@@ -106,7 +130,6 @@ for day, shows in schedule.items():
             used_colors.add(color_id)
 
         if show["suspended"]:
-            # Recurring all-day event for suspended shows (future only)
             if base_date.date() >= today:
                 event = {
                     "summary": f"{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]",
@@ -119,7 +142,6 @@ for day, shows in schedule.items():
                 print(f"Inserting event: {json.dumps(event, indent=2)}")
                 service.events().insert(calendarId=calendar_id, body=event).execute()
         else:
-            # All-day event for each remaining episode (future only)
             for ep in range(latest_episode + 1, min(total_ep + 1, latest_episode + 11)):
                 ep_date = base_date + timedelta(weeks=(ep - latest_episode - 1))
                 if ep_date.date() >= today:
@@ -131,5 +153,20 @@ for day, shows in schedule.items():
                     }
                     print(f"Inserting event: {json.dumps(event, indent=2)}")
                     service.events().insert(calendarId=calendar_id, body=event).execute()
+
+# Add upcoming events
+for item in upcoming:
+    if item["date"]:
+        event_date = datetime.strptime(item["date"], "%B %d, %Y").date()
+        if event_date >= today:
+            summary = f"🎟️ {item['title']}" if item["theatrical"] else item["title"]
+            event = {
+                "summary": summary,
+                "start": {"date": event_date.strftime("%Y-%m-%d")},
+                "end": {"date": event_date.strftime("%Y-%m-%d")},
+                "colorId": upcoming_color
+            }
+            print(f"Inserting event: {json.dumps(event, indent=2)}")
+            service.events().insert(calendarId=calendar_id, body=event).execute()
 
 print("Calendar updated successfully!")
