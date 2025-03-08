@@ -8,6 +8,17 @@ import os
 import json
 import hashlib
 
+# Streaming provider emojis and USA prioritization
+STREAMING_PROVIDERS = {
+    "Crunchyroll": "🍥",  # USA priority, fishcake resembles logo
+    "Netflix": "🅽",      # USA priority, red N (best match)
+    "Hulu": "🅷",        # USA priority, green h (best match)
+    "Amazon Prime Video": "🅰",  # USA priority, package for Amazon branding
+    "Ani-One Asia": None,
+    "Bahamut Anime Crazy": None,
+    "Bilibili Global": None
+}
+
 # Scrape the forum post
 url = "https://myanimelist.net/forum/?topicid=1692966"
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
@@ -71,6 +82,42 @@ for line in lines:
             "section": current_section
         })
 
+# Scrape MAL for streaming and descriptions
+def get_mal_info(title):
+    search_url = f"https://myanimelist.net/anime.php?q={requests.utils.quote(title)}&cat=anime"
+    search_response = requests.get(search_url, headers=headers)
+    search_soup = BeautifulSoup(search_response.content, "html.parser")
+    anime_link = search_soup.select_one(".hoverinfo_trigger")
+    if anime_link:
+        mal_id = anime_link["id"].replace("sarea", "")
+        mal_url = f"https://myanimelist.net/anime/{mal_id}/{requests.utils.quote(title.replace(' ', '_'))}"
+        mal_response = requests.get(mal_url, headers=headers)
+        mal_soup = BeautifulSoup(mal_response.content, "html.parser")
+        
+        # Streaming platforms
+        streaming_div = mal_soup.select_one(".js-anime-streaming-links")
+        streaming_list = []
+        if streaming_div:
+            for a in streaming_div.select("a"):
+                provider = a.text.strip()
+                if provider in STREAMING_PROVIDERS:
+                    streaming_list.append(provider)
+        if streaming_div:
+            for a in streaming_div.select("a"):
+                provider = a.text.strip()
+                if provider not in streaming_list:
+                    streaming_list.append(provider)
+        
+        # Description (episode or season/show)
+        desc_div = mal_soup.select_one(".js-scrollfix-bottom-rel + .spaceit_pad")
+        description = desc_div.text.strip() if desc_div else "No description available."
+        
+        return {
+            "streaming": streaming_list,
+            "description": description
+        }
+    return {"streaming": [], "description": "No description available."}
+
 # Google Calendar setup
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 credentials_json = os.getenv("GOOGLE_CREDENTIALS")
@@ -126,6 +173,11 @@ for day, shows in schedule.items():
         latest_episode = show["current"]
         total_ep = show["total"] or 10  # Fallback still applies if parsing fails
         base_date = next_weekday(current_date, day_index)
+        mal_info = get_mal_info(show["name"])
+        streaming = mal_info["streaming"]
+        main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
+        emoji = STREAMING_PROVIDERS.get(main_provider, "") if main_provider else ""
+        description = mal_info["description"] if latest_episode == 1 or not f"Episode {latest_episode + 1}" in mal_info["description"] else f"{mal_info['description'].split('Episode', 1)[0].strip()} Episode {latest_episode + 1}: {mal_info['description'].split('Episode', 1)[1].strip()}"
         
         color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
         if not show["suspended"]:
@@ -148,7 +200,9 @@ for day, shows in schedule.items():
                 ep_date = base_date + timedelta(weeks=(ep - latest_episode - 1))
                 if ep_date.date() >= today:
                     event = {
-                        "summary": f"{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
+                        "summary": f"{emoji}{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
+                        "description": f"{', '.join(streaming)}" if streaming else None,
+                        description if description != "No description available." else None,
                         "start": {"date": ep_date.strftime("%Y-%m-%d")},
                         "end": {"date": ep_date.strftime("%Y-%m-%d")},
                         "colorId": color_id
@@ -161,10 +215,21 @@ for item in upcoming:
     if item["date"]:
         event_date = datetime.strptime(item["date"], "%B %d, %Y").date()
         if event_date >= today:
-            summary = f"🎟️{item['title']}" if item["theatrical"] else item["title"]
+            mal_info = get_mal_info(item["title"])
+            streaming = mal_info["streaming"]
+            main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
+            emoji = STREAMING_PROVIDERS.get(main_provider, "") if main_provider else ""
+            summary = f"🎟️{item['title']}" if item["theatrical"] else f"{emoji}{item['title']}"
+            description = (
+                f"🎟️ * = These are theatrical releases and not home/digital releases.\n"
+                f"{mal_info['description']}"
+            ) if item["theatrical"] else (
+                f"{', '.join(streaming)}" if streaming else None,
+                mal_info["description"] if mal_info["description"] != "No description available." else None
+            )
             event = {
                 "summary": summary,
-                "description": "* = These are theatrical releases and not home/digital releases." if item["theatrical"] else None,
+                "description": description if isinstance(description, str) else '\n'.join(filter(None, description)) if isinstance(description, tuple) else None,
                 "start": {"date": event_date.strftime("%Y-%m-%d")},
                 "end": {"date": event_date.strftime("%Y-%m-%d")},
                 "colorId": upcoming_color
