@@ -80,11 +80,13 @@ for day, shows in schedule.items():
         base_date = next_weekday(current_date, day_index)
         
         for ep in range(latest_episode + 1, min(total_ep + 1, latest_episode + 5)):
-            ep_date = base_date + timedelta(weeks=(ep - latest_episode - 1))
+            ep_date = next_weekday(current_date, day_index) + timedelta(weeks=(ep - latest_episode - 1))
+            start_time = ep_date.replace(hour=12, minute=0, second=0, microsecond=0)
+            end_time = start_time + timedelta(hours=1)
             event = {
                 "summary": f"{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
-                "start": {"dateTime": ep_date.isoformat() + "T12:00:00Z", "timeZone": "UTC"},
-                "end": {"dateTime": (ep_date + timedelta(hours=1)).isoformat() + "T13:00:00Z", "timeZone": "UTC"},
+                "start": {"dateTime": start_time.isoformat() + "Z", "timeZone": "UTC"},
+                "end": {"dateTime": end_time.isoformat() + "Z", "timeZone": "UTC"},
                 "colorId": "10"
             }
             if show["suspended"]:
