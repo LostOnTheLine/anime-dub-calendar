@@ -9,12 +9,21 @@ import json
 
 # Scrape the forum post
 url = "https://myanimelist.net/forum/?topicid=1692966"
-response = requests.get(url)
+headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+response = requests.get(url, headers=headers)
+print(f"Status Code: {response.status_code}")
 soup = BeautifulSoup(response.content, "html.parser")
-first_comment = soup.select_one(".forum_post .post_content")
+first_comment = soup.select_one(".forum-topic-message .content")
+
+if first_comment is None:
+    print("Error: Could not find '.forum-topic-message .content' in the page")
+    print(f"Page snippet: {response.text[:500]}")
+    exit(1)
+
+print(f"First comment snippet: {first_comment.text[:200]}")
+lines = first_comment.text.strip().split("\n")
 
 # Parse the text
-lines = first_comment.text.strip().split("\n")
 schedule = {}
 current_day = None
 day_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
@@ -38,8 +47,8 @@ for line in lines:
 
 # Google Calendar setup
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-credentials_json = os.getenv("GOOGLE_CREDENTIALS")  # Fetch from env var
-credentials_dict = json.loads(credentials_json)  # Parse JSON string
+credentials_json = os.getenv("GOOGLE_CREDENTIALS")
+credentials_dict = json.loads(credentials_json)
 creds = service_account.Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
 service = build("calendar", "v3", credentials=creds)
 calendar_id = os.getenv("CALENDAR_ID")
@@ -75,12 +84,12 @@ for day, shows in schedule.items():
                 "summary": f"{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
                 "start": {"dateTime": ep_date.isoformat() + "T12:00:00Z", "timeZone": "UTC"},
                 "end": {"dateTime": (ep_date + timedelta(hours=1)).isoformat() + "T13:00:00Z", "timeZone": "UTC"},
-                "colorId": "10"  # Green
+                "colorId": "10"
             }
             if show["suspended"]:
                 event["summary"] = f"{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]"
                 event["description"] = "** = Dub production suspended until further notice."
-                event["colorId"] = "8"  # Gray
+                event["colorId"] = "8"
             service.events().insert(calendarId=calendar_id, body=event).execute()
 
 print("Calendar updated successfully!")
