@@ -8,16 +8,28 @@ import os
 import json
 import hashlib
 
-# Streaming provider emojis and USA prioritization
+# Manual mapping for streaming providers (override or add when MAL data is missing/inaccurate)
+MANUAL_STREAMING = {
+    "Yu-Gi-Oh: Go Rush": {"provider": "DisneyNow", "emoji": "📺", "dub": "DisneyNow"},  # Example for DisneyNow
+    # Add more mappings as needed: {"show_name": {"provider": "Provider", "emoji": "Emoji", "dub": "DubProvider"}}
+}
+
+# Streaming provider emojis and USA prioritization (order defines priority)
 STREAMING_PROVIDERS = {
-    "Crunchyroll": "🍥",              # USA priority, fishcake resembles logo
-    "Netflix": "🅽",                  # USA priority, uppercase N (boxed)
-    "Hulu": "ⓗ",                    # USA priority, lowercase h (circled)
-    "Amazon Prime Video": "ⓐ",       # USA priority, lowercase a (circled)
-    "Disney+": "🇩",                 # USA priority, uppercase D (flag style)
+    "HiDive": "🌀",           # USA priority, spiral for HiDive logo
+    "Crunchyroll": "🍥",      # USA priority, fishcake resembles logo
+    "Disney+": "🇩",          # USA priority, flag D for Disney+
+    "Netflix": "🅽",          # USA priority, boxed N
+    "Amazon Prime Video": "ⓐ", # USA priority, circled a
+    "Hulu": "ⓗ",             # USA priority, circled h
+    "Tubi": "📺",             # USA priority, TV icon
+    "Fubo": "🎥",             # USA priority, movie camera
+    "Max": "🌟",              # USA priority, star for HBO Max
+    "RetroCrush": "🎞️",      # USA priority, film strip
     "Ani-One Asia": None,
     "Bahamut Anime Crazy": None,
-    "Bilibili Global": None
+    "Bilibili Global": None,
+    "Anime Digital Network": None  # Example unlisted provider
 }
 
 # Scrape the forum post
@@ -59,10 +71,11 @@ for line in lines:
                 "name": name.strip(),
                 "current": current_ep,
                 "total": total_ep,
-                "suspended": suspended == "**"
+                "suspended": suspended == "**",
+                "mal_link": None  # Will be set below
             })
 
-# Parse upcoming sections
+# Parse upcoming sections and extract MAL links
 upcoming = []
 current_section = None
 date_pattern = re.compile(r"(\w+ \d{1,2}, \d{4})")
@@ -74,46 +87,82 @@ for line in lines:
     elif line and current_section and not line.startswith("* -"):
         match = date_pattern.search(line)
         is_theatrical = line.endswith("*")
-        title = line.split(" - ")[0].strip() if " - " in line else line.rstrip("*").strip()
+        # Extract MAL link if present
+        mal_link_match = re.search(r'<a href="https?://myanimelist\.net/anime/(\d+)/[^"]+"[^>]*>([^<]+)</a>', line)
+        title = mal_link_match.group(2) if mal_link_match else line.split(" - ")[0].strip() if " - " in line else line.rstrip("*").strip()
+        mal_link = mal_link_match.group(0) if mal_link_match else None
         date_str = match.group(1) if match else None
         upcoming.append({
             "title": title,
             "date": date_str,
             "theatrical": is_theatrical,
-            "section": current_section
+            "section": current_section,
+            "mal_link": mal_link
         })
 
-# Scrape MAL for streaming platforms
-def get_mal_info(title):
-    search_url = f"https://myanimelist.net/anime.php?q={requests.utils.quote(title)}&cat=anime"
-    search_response = requests.get(search_url, headers=headers)
-    search_soup = BeautifulSoup(search_response.content, "html.parser")
-    anime_link = search_soup.select_one(".hoverinfo_trigger")
-    if anime_link:
-        mal_id = anime_link["id"].replace("sarea", "")
-        mal_url = f"https://myanimelist.net/anime/{mal_id}/{requests.utils.quote(title.replace(' ', '_'))}"
-        print(f"Scraping MAL for {title}: {mal_url}")
-        mal_response = requests.get(mal_url, headers=headers)
-        mal_soup = BeautifulSoup(mal_response.content, "html.parser")
-        
-        # Updated selector for streaming platforms
-        streaming_div = mal_soup.select_one(".broadcasts")
-        streaming_list = []
-        if streaming_div:
-            for item in streaming_div.select(".broadcast-item .caption"):
-                provider = item.text.strip()
-                if provider in STREAMING_PROVIDERS:
-                    streaming_list.append(provider)
-            # Include non-prioritized providers
-            for item in streaming_div.select(".broadcast-item .caption"):
-                provider = item.text.strip()
-                if provider not in streaming_list:
-                    streaming_list.append(provider)
-        
-        print(f"Streaming providers for {title}: {streaming_list}")
-        return {"streaming": streaming_list}
-    print(f"No MAL entry found for {title}")
-    return {"streaming": []}
+# Scrape MAL for streaming platforms and additional data
+def get_mal_info(mal_link=None, title=None):
+    if mal_link:
+        mal_url = re.search(r'href="([^"]+)"', mal_link).group(1)
+        print(f"Using MAL link: {mal_url}")
+    elif title:
+        search_url = f"https://myanimelist.net/anime.php?q={requests.utils.quote(title)}&cat=anime"
+        search_response = requests.get(search_url, headers=headers)
+        search_soup = BeautifulSoup(search_response.content, "html.parser")
+        anime_link = search_soup.select_one(".hoverinfo_trigger")
+        if anime_link:
+            mal_id = anime_link["id"].replace("sarea", "")
+            mal_url = f"https://myanimelist.net/anime/{mal_id}/{requests.utils.quote(title.replace(' ', '_'))}"
+        else:
+            print(f"No MAL entry found for {title}")
+            return {"streaming": [], "broadcast": "", "producers": [], "studios": [], "source": "", "genres": [], "demographic": "", "duration": "", "rating": ""}
+    else:
+        return {"streaming": [], "broadcast": "", "producers": [], "studios": [], "source": "", "genres": [], "demographic": "", "duration": "", "rating": ""}
+
+    mal_response = requests.get(mal_url, headers=headers)
+    mal_soup = BeautifulSoup(mal_response.content, "html.parser")
+    
+    # Streaming platforms
+    streaming_div = mal_soup.select_one(".broadcasts")
+    streaming_list = []
+    if streaming_div:
+        for item in streaming_div.select(".broadcast-item .caption"):
+            provider = item.text.strip()
+            if provider in STREAMING_PROVIDERS:
+                streaming_list.append(provider)
+        for item in streaming_div.select(".broadcast-item .caption"):
+            provider = item.text.strip()
+            if provider not in streaming_list:
+                streaming_list.append(provider)
+    print(f"Streaming providers: {streaming_list}")
+
+    # Additional MAL data
+    broadcast = mal_soup.select_one(".spaceit_pad:contains('Broadcast:')")
+    broadcast = broadcast.text.strip().replace("Broadcast:", "").strip() if broadcast else ""
+    
+    producers = [a.text for a in mal_soup.select(".spaceit_pad:contains('Producers:') a")] if mal_soup.select_one(".spaceit_pad:contains('Producers:')") else []
+    studios = [a.text for a in mal_soup.select(".spaceit_pad:contains('Studios:') a")] if mal_soup.select_one(".spaceit_pad:contains('Studios:')") else []
+    source = mal_soup.select_one(".spaceit_pad:contains('Source:') a")
+    source = source.text.strip() if source else mal_soup.select_one(".spaceit_pad:contains('Source:')").text.strip().replace("Source:", "").strip() if mal_soup.select_one(".spaceit_pad:contains('Source:')") else ""
+    genres = [a.text for a in mal_soup.select(".spaceit_pad:contains('Genres:') a")] if mal_soup.select_one(".spaceit_pad:contains('Genres:')") else []
+    demographic = mal_soup.select_one(".spaceit_pad:contains('Demographic:') a")
+    demographic = demographic.text if demographic else mal_soup.select_one(".spaceit_pad:contains('Demographic:')").text.strip().replace("Demographic:", "").strip() if mal_soup.select_one(".spaceit_pad:contains('Demographic:')") else ""
+    duration = mal_soup.select_one(".spaceit_pad:contains('Duration:')")
+    duration = duration.text.strip().replace("Duration:", "").strip() if duration else ""
+    rating = mal_soup.select_one(".spaceit_pad:contains('Rating:')")
+    rating = rating.text.strip().replace("Rating:", "").strip() if rating else ""
+
+    return {
+        "streaming": streaming_list,
+        "broadcast": broadcast,
+        "producers": producers,
+        "studios": studios,
+        "source": source,
+        "genres": genres,
+        "demographic": demographic,
+        "duration": duration,
+        "rating": rating
+    }
 
 # Google Calendar setup
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
@@ -168,12 +217,19 @@ for day, shows in schedule.items():
     
     for show in shows:
         latest_episode = show["current"]
-        total_ep = show["total"] or 10  # Fallback still applies if parsing fails
+        total_ep = show["total"] or 10  # Fallback if parsing fails
         base_date = next_weekday(current_date, day_index)
-        mal_info = get_mal_info(show["name"])
+        mal_info = get_mal_info(show["mal_link"], show["name"])
         streaming = mal_info["streaming"]
-        main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
-        emoji = STREAMING_PROVIDERS.get(main_provider, "") if main_provider else ""
+        manual = MANUAL_STREAMING.get(show["name"])
+        if manual:
+            main_provider = manual["provider"]
+            emoji = manual["emoji"]
+            description_part = f"[Dub: {manual['dub']}]" if manual.get("dub") else ""
+        else:
+            main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
+            emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
+            description_part = ""
         print(f"Show: {show['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
         
         color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
@@ -183,8 +239,8 @@ for day, shows in schedule.items():
         if show["suspended"]:
             if base_date.date() >= today:
                 event = {
-                    "summary": f"{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]",
-                    "description": "** = Dub production suspended until further notice.",
+                    "summary": f"{emoji}{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]",
+                    "description": f"{description_part}\n** = Dub production suspended until further notice.\nStreaming: {', '.join(streaming) if streaming else 'None'}\nBroadcast: {mal_info['broadcast']}\nProducers: {', '.join(mal_info['producers']) if mal_info['producers'] else 'None'}\nStudios: {', '.join(mal_info['studios']) if mal_info['studios'] else 'None'}\nSource: {mal_info['source']}\nGenres: {', '.join(mal_info['genres']) if mal_info['genres'] else 'None'}\nDemographic: {mal_info['demographic']}\nDuration: {mal_info['duration']}\nRating: {mal_info['rating']}",
                     "start": {"date": base_date.strftime("%Y-%m-%d")},
                     "end": {"date": base_date.strftime("%Y-%m-%d")},
                     "recurrence": ["RRULE:FREQ=WEEKLY"],
@@ -198,6 +254,7 @@ for day, shows in schedule.items():
                 if ep_date.date() >= today:
                     event = {
                         "summary": f"{emoji}{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
+                        "description": f"{description_part}\nStreaming: {', '.join(streaming) if streaming else 'None'}\nBroadcast: {mal_info['broadcast']}\nProducers: {', '.join(mal_info['producers']) if mal_info['producers'] else 'None'}\nStudios: {', '.join(mal_info['studios']) if mal_info['studios'] else 'None'}\nSource: {mal_info['source']}\nGenres: {', '.join(mal_info['genres']) if mal_info['genres'] else 'None'}\nDemographic: {mal_info['demographic']}\nDuration: {mal_info['duration']}\nRating: {mal_info['rating']}",
                         "start": {"date": ep_date.strftime("%Y-%m-%d")},
                         "end": {"date": ep_date.strftime("%Y-%m-%d")},
                         "colorId": color_id
@@ -210,15 +267,22 @@ for item in upcoming:
     if item["date"]:
         event_date = datetime.strptime(item["date"], "%B %d, %Y").date()
         if event_date >= today:
-            mal_info = get_mal_info(item["title"])
+            mal_info = get_mal_info(item["mal_link"], item["title"])
             streaming = mal_info["streaming"]
-            main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
-            emoji = STREAMING_PROVIDERS.get(main_provider, "") if main_provider else ""
+            manual = MANUAL_STREAMING.get(item["title"])
+            if manual:
+                main_provider = manual["provider"]
+                emoji = manual["emoji"]
+                description_part = f"[Dub: {manual['dub']}]" if manual.get("dub") else ""
+            else:
+                main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
+                emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
+                description_part = ""
             print(f"Upcoming: {item['title']}, Main Provider: {main_provider}, Emoji: {emoji}")
             summary = f"🎟️{item['title']}" if item["theatrical"] else f"{emoji}{item['title']}"
             event = {
                 "summary": summary,
-                "description": f"🎟️ * = These are theatrical releases and not home/digital releases." if item["theatrical"] else None,
+                "description": f"{description_part}\n🎟️ * = These are theatrical releases and not home/digital releases.\nStreaming: {', '.join(streaming) if streaming else 'None'}\nBroadcast: {mal_info['broadcast']}\nProducers: {', '.join(mal_info['producers']) if mal_info['producers'] else 'None'}\nStudios: {', '.join(mal_info['studios']) if mal_info['studios'] else 'None'}\nSource: {mal_info['source']}\nGenres: {', '.join(mal_info['genres']) if mal_info['genres'] else 'None'}\nDemographic: {mal_info['demographic']}\nDuration: {mal_info['duration']}\nRating: {mal_info['rating']}" if item["theatrical"] else f"{description_part}\nStreaming: {', '.join(streaming) if streaming else 'None'}\nBroadcast: {mal_info['broadcast']}\nProducers: {', '.join(mal_info['producers']) if mal_info['producers'] else 'None'}\nStudios: {', '.join(mal_info['studios']) if mal_info['studios'] else 'None'}\nSource: {mal_info['source']}\nGenres: {', '.join(mal_info['genres']) if mal_info['genres'] else 'None'}\nDemographic: {mal_info['demographic']}\nDuration: {mal_info['duration']}\nRating: {mal_info['rating']}",
                 "start": {"date": event_date.strftime("%Y-%m-%d")},
                 "end": {"date": event_date.strftime("%Y-%m-%d")},
                 "colorId": upcoming_color
