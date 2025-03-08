@@ -10,10 +10,11 @@ import hashlib
 
 # Streaming provider emojis and USA prioritization
 STREAMING_PROVIDERS = {
-    "Crunchyroll": "🍥",  # USA priority, fishcake resembles logo
-    "Netflix": "🅽",      # USA priority, red N (best match)
-    "Hulu": "🅷",        # USA priority, green h (best match)
-    "Amazon Prime Video": "🅰",  # USA priority, package for Amazon branding
+    "Crunchyroll": "🍥",              # USA priority, fishcake resembles logo
+    "Netflix": "🅽",                  # USA priority, uppercase N (boxed)
+    "Hulu": "ⓗ",                    # USA priority, lowercase h (circled)
+    "Amazon Prime Video": "ⓐ",       # USA priority, lowercase a (circled)
+    "Disney+": "🇩",                 # USA priority, uppercase D (flag style)
     "Ani-One Asia": None,
     "Bahamut Anime Crazy": None,
     "Bilibili Global": None
@@ -91,24 +92,27 @@ def get_mal_info(title):
     if anime_link:
         mal_id = anime_link["id"].replace("sarea", "")
         mal_url = f"https://myanimelist.net/anime/{mal_id}/{requests.utils.quote(title.replace(' ', '_'))}"
+        print(f"Scraping MAL for {title}: {mal_url}")
         mal_response = requests.get(mal_url, headers=headers)
         mal_soup = BeautifulSoup(mal_response.content, "html.parser")
         
-        # Streaming platforms
-        streaming_div = mal_soup.select_one(".js-anime-streaming-links")
+        # Updated selector for streaming platforms
+        streaming_div = mal_soup.select_one(".broadcasts")
         streaming_list = []
         if streaming_div:
-            for a in streaming_div.select("a"):
-                provider = a.text.strip()
+            for item in streaming_div.select(".broadcast-item .caption"):
+                provider = item.text.strip()
                 if provider in STREAMING_PROVIDERS:
                     streaming_list.append(provider)
-        if streaming_div:
-            for a in streaming_div.select("a"):
-                provider = a.text.strip()
+            # Include non-prioritized providers
+            for item in streaming_div.select(".broadcast-item .caption"):
+                provider = item.text.strip()
                 if provider not in streaming_list:
                     streaming_list.append(provider)
         
+        print(f"Streaming providers for {title}: {streaming_list}")
         return {"streaming": streaming_list}
+    print(f"No MAL entry found for {title}")
     return {"streaming": []}
 
 # Google Calendar setup
@@ -154,7 +158,7 @@ while True:
 # Add all-day events for ongoing schedule
 def next_weekday(start_date, weekday):
     days_ahead = weekday - start_date.weekday()
-    if days_ahead <= 0:
+    if days_ahead < 0:  # If the target day is earlier in the week, add 7 days
         days_ahead += 7
     return start_date + timedelta(days=days_ahead)
 
@@ -170,6 +174,7 @@ for day, shows in schedule.items():
         streaming = mal_info["streaming"]
         main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
         emoji = STREAMING_PROVIDERS.get(main_provider, "") if main_provider else ""
+        print(f"Show: {show['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
         
         color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
         if not show["suspended"]:
@@ -209,6 +214,7 @@ for item in upcoming:
             streaming = mal_info["streaming"]
             main_provider = next((p for p in STREAMING_PROVIDERS if p in streaming), None)
             emoji = STREAMING_PROVIDERS.get(main_provider, "") if main_provider else ""
+            print(f"Upcoming: {item['title']}, Main Provider: {main_provider}, Emoji: {emoji}")
             summary = f"🎟️{item['title']}" if item["theatrical"] else f"{emoji}{item['title']}"
             event = {
                 "summary": summary,
