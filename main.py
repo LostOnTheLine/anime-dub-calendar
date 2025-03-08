@@ -35,13 +35,17 @@ for line in lines:
         current_day = line
         schedule[current_day] = []
     elif line and current_day and "Episodes:" in line:
-        match = re.match(r"(.+?)\s*\(Episodes:\s*(\d+)(?:/(\d+|\?))?\)\s*(\*\*)?", line)
+        match = re.match(r"(.+?)\s*\(Episodes:\s*(\d+)(?:/(\d+|\?{3}))?\)\s*(\*\*)?", line)
         if match:
             name, current_ep, total_ep, suspended = match.groups()
-            total_ep = int(total_ep) if total_ep and total_ep != "?" else None
+            current_ep = int(current_ep)
+            if total_ep == "???":
+                total_ep = 24 if current_ep < 20 else 56  # Estimate based on current episode
+            else:
+                total_ep = int(total_ep) if total_ep and total_ep != "?" else None
             schedule[current_day].append({
                 "name": name.strip(),
-                "current": int(current_ep),
+                "current": current_ep,
                 "total": total_ep,
                 "suspended": suspended == "**"
             })
@@ -57,10 +61,8 @@ for line in lines:
         current_section = line
     elif line and current_section and not line.startswith("* -"):
         match = date_pattern.search(line)
-        title = line.split(" - ")[0].strip() if " - " in line else line.strip()
-        is_theatrical = title.endswith("*")
-        if is_theatrical:
-            title = title.rstrip("*").strip()
+        is_theatrical = line.endswith("*")
+        title = line.split(" - ")[0].strip() if " - " in line else line.rstrip("*").strip()
         date_str = match.group(1) if match else None
         upcoming.append({
             "title": title,
@@ -122,7 +124,7 @@ for day, shows in schedule.items():
     
     for show in shows:
         latest_episode = show["current"]
-        total_ep = show["total"] or 10
+        total_ep = show["total"] or 10  # Fallback still applies if parsing fails
         base_date = next_weekday(current_date, day_index)
         
         color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
@@ -159,9 +161,10 @@ for item in upcoming:
     if item["date"]:
         event_date = datetime.strptime(item["date"], "%B %d, %Y").date()
         if event_date >= today:
-            summary = f"🎟️ {item['title']}" if item["theatrical"] else item["title"]
+            summary = f"🎟️{item['title']}" if item["theatrical"] else item["title"]
             event = {
                 "summary": summary,
+                "description": "* = These are theatrical releases and not home/digital releases." if item["theatrical"] else None,
                 "start": {"date": event_date.strftime("%Y-%m-%d")},
                 "end": {"date": event_date.strftime("%Y-%m-%d")},
                 "colorId": upcoming_color
