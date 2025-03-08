@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import re
 import os
 import json
@@ -71,12 +71,16 @@ def get_color_id(show_name, day_shows, used_colors):
 
 # Clear only future events
 current_date = datetime.now()
-time_min = current_date.isoformat() + "Z"  # Only events starting now or later
+today = current_date.date()  # Use date object for comparisons
 page_token = None
 while True:
-    events = service.events().list(calendarId=calendar_id, timeMin=time_min, pageToken=page_token).execute()
+    events = service.events().list(calendarId=calendar_id, pageToken=page_token).execute()
     for event in events["items"]:
-        service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
+        start = event["start"].get("date") or event["start"].get("dateTime")
+        if start:
+            event_date = datetime.strptime(start[:10], "%Y-%m-%d").date()  # Extract YYYY-MM-DD
+            if event_date >= today:
+                service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
     page_token = events.get("nextPageToken")
     if not page_token:
         break
@@ -103,7 +107,7 @@ for day, shows in schedule.items():
 
         if show["suspended"]:
             # Recurring all-day event for suspended shows (future only)
-            if base_date >= current_date.date():
+            if base_date.date() >= today:
                 event = {
                     "summary": f"{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]",
                     "description": "** = Dub production suspended until further notice.",
@@ -118,7 +122,7 @@ for day, shows in schedule.items():
             # All-day event for each remaining episode (future only)
             for ep in range(latest_episode + 1, min(total_ep + 1, latest_episode + 11)):
                 ep_date = base_date + timedelta(weeks=(ep - latest_episode - 1))
-                if ep_date >= current_date.date():
+                if ep_date.date() >= today:
                     event = {
                         "summary": f"{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
                         "start": {"date": ep_date.strftime("%Y-%m-%d")},
