@@ -283,7 +283,7 @@ def initialize_calendar():
         print(f"Error initializing Google Calendar: {e}")
         return None
 
-def get_color_id(show_name, day_shows, used_colors):
+async def get_color_id(show_name, day_shows, used_colors):
     hash_value = int(hashlib.md5(show_name.encode()).hexdigest(), 16)
     color_index = hash_value % len(available_colors)
     base_color = available_colors[color_index]
@@ -323,7 +323,7 @@ def next_weekday(start_date, weekday):
         days_ahead += 7
     return start_date + timedelta(days_ahead)
 
-def process_ongoing_events(ongoing_data, metadata):
+async def process_ongoing_events(ongoing_data, metadata):
     ongoing_events = []
     current_date = datetime.now()
     today = current_date.date()
@@ -334,118 +334,27 @@ def process_ongoing_events(ongoing_data, metadata):
         day_index = day_map[day]
         used_colors = set()
         loop = asyncio.get_event_loop()
-        for show in shows:
+        mal_infos = await process_mal_info(shows) if not metadata else {show["name"]: metadata.get(show["mal_link"]) for show in shows}
+        for show, mal_info in zip(shows, [mal_infos.get(show["name"], {}) for show in shows]):
             latest_episode = show["current"]
             total_ep = show["total"] or 10
             base_date = next_weekday(current_date, day_index)
-            mal_info = metadata.get(show["name"]) if metadata else await get_mal_info(show["mal_link"], show["name"])
-            if mal_info:
-                streaming = mal_info.get("streaming", [])
-                manual = MANUAL_STREAMING.get(show["name"])
-                if manual:
-                    main_provider = manual["provider"]
-                    emoji = manual["emoji"]
-                    description_part = f"[Dub: {manual['dub']}]" if manual.get("dub") else ""
-                else:
-                    main_provider = next((p for p in STREAMING_PROVIDERS if any(p.lower() == s.lower() for s in streaming)), None)
-                    emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
-                    description_part = ""
-                print(f"Show: {show['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
-                color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
-                if not show["suspended"]:
-                    used_colors.add(color_id)
-                if show["suspended"]:
-                    if base_date.date() >= today:
-                        description_lines = [f"Rating: {mal_info.get('rating', 'Not Listed')}"]
-                        if streaming:
-                            description_lines.append(f"Streaming: {', '.join(streaming)}")
-                        if mal_info.get("broadcast"):
-                            description_lines.append(f"Broadcast: {mal_info['broadcast']}")
-                        if mal_info.get("genres"):
-                            description_lines.append(f"Genres: {', '.join(mal_info['genres'])}")
-                        if mal_info.get("theme"):
-                            description_lines.append(f"Theme: {', '.join(mal_info['theme'])}")
-                        if mal_info.get("studios"):
-                            description_lines.append(f"Studios: {', '.join(mal_info['studios'])}")
-                        if mal_info.get("producers"):
-                            description_lines.append(f"Producers: {', '.join(mal_info['producers'])}")
-                        if mal_info.get("source"):
-                            description_lines.append(f"Source: {mal_info['source']}")
-                        if mal_info.get("demographic"):
-                            description_lines.append(f"Demographic: {mal_info['demographic']}")
-                        if mal_info.get("duration"):
-                            description_lines.append(f"Duration: {mal_info['duration']}")
-                        description = f"{description_part}\n** = Dub production suspended until further notice.\n" + "\n".join(description_lines)
-
-                        event = {
-                            "summary": f"{emoji}{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]",
-                            "description": description,
-                            "start": {"date": base_date.strftime("%Y-%m-%d")},
-                            "end": {"date": base_date.strftime("%Y-%m-%d")},
-                            "recurrence": ["RRULE:FREQ=WEEKLY"],
-                            "colorId": color_id
-                        }
-                        ongoing_events.append(event)
-                else:
-                    for ep in range(latest_episode + 1, min(total_ep + 1, latest_episode + 11)):
-                        ep_date = base_date + timedelta(weeks=(ep - latest_episode - 1))
-                        if ep_date.date() >= today:
-                            description_lines = [f"Rating: {mal_info.get('rating', 'Not Listed')}"]
-                            if streaming:
-                                description_lines.append(f"Streaming: {', '.join(streaming)}")
-                            if mal_info.get("broadcast"):
-                                description_lines.append(f"Broadcast: {mal_info['broadcast']}")
-                            if mal_info.get("genres"):
-                                description_lines.append(f"Genres: {', '.join(mal_info['genres'])}")
-                            if mal_info.get("theme"):
-                                description_lines.append(f"Theme: {', '.join(mal_info['theme'])}")
-                            if mal_info.get("studios"):
-                                description_lines.append(f"Studios: {', '.join(mal_info['studios'])}")
-                            if mal_info.get("producers"):
-                                description_lines.append(f"Producers: {', '.join(mal_info['producers'])}")
-                            if mal_info.get("source"):
-                                description_lines.append(f"Source: {mal_info['source']}")
-                            if mal_info.get("demographic"):
-                                description_lines.append(f"Demographic: {mal_info['demographic']}")
-                            if mal_info.get("duration"):
-                                description_lines.append(f"Duration: {mal_info['duration']}")
-                            description = f"{description_part}\n" + "\n".join(description_lines) if description_lines else description_part
-
-                            event = {
-                                "summary": f"{emoji}{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
-                                "description": description,
-                                "start": {"date": ep_date.strftime("%Y-%m-%d")},
-                                "end": {"date": ep_date.strftime("%Y-%m-%d")},
-                                "colorId": color_id
-                            }
-                            ongoing_events.append(event)
-    return ongoing_events
-
-def process_upcoming_events(upcoming_data, metadata):
-    upcoming_events = []
-    current_date = datetime.now()
-    today = current_date.date()
-    available_colors = ["1", "2", "3", "5", "6", "7", "9", "10"]
-    upcoming_color = "11"
-    loop = asyncio.get_event_loop()
-    for item in upcoming_data:
-        if item["date"]:
-            event_date = datetime.strptime(item["date"], "%B %d, %Y").date()
-            if event_date >= today:
-                mal_info = metadata.get(item["name"]) if metadata else await get_mal_info(item["mal_link"], item["name"])
-                if mal_info:
-                    streaming = mal_info.get("streaming", [])
-                    manual = MANUAL_STREAMING.get(item["name"])
-                    if manual:
-                        main_provider = manual["provider"]
-                        emoji = manual["emoji"]
-                        description_part = f"[Dub: {manual['dub']}]" if manual.get("dub") else ""
-                    else:
-                        main_provider = next((p for p in STREAMING_PROVIDERS if any(p.lower() == s.lower() for s in streaming)), None)
-                        emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
-                        description_part = ""
-                    print(f"Upcoming: {item['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
-                    summary = f"🎟️{item['name']}" if item["theatrical"] else f"{emoji}{item['name']}"
+            streaming = mal_info.get("streaming", [])
+            manual = MANUAL_STREAMING.get(show["name"])
+            if manual:
+                main_provider = manual["provider"]
+                emoji = manual["emoji"]
+                description_part = f"[Dub: {manual['dub']}]" if manual.get("dub") else ""
+            else:
+                main_provider = next((p for p in STREAMING_PROVIDERS if any(p.lower() == s.lower() for s in streaming)), None)
+                emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
+                description_part = ""
+            print(f"Show: {show['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
+            color_id = suspended_color if show["suspended"] else await get_color_id(show["name"], shows, used_colors)
+            if not show["suspended"]:
+                used_colors.add(color_id)
+            if show["suspended"]:
+                if base_date.date() >= today:
                     description_lines = [f"Rating: {mal_info.get('rating', 'Not Listed')}"]
                     if streaming:
                         description_lines.append(f"Streaming: {', '.join(streaming)}")
@@ -465,16 +374,105 @@ def process_upcoming_events(upcoming_data, metadata):
                         description_lines.append(f"Demographic: {mal_info['demographic']}")
                     if mal_info.get("duration"):
                         description_lines.append(f"Duration: {mal_info['duration']}")
-                    description = f"{description_part}\n{'🎟️ * = These are theatrical releases and not home/digital releases.' if item['theatrical'] else ''}\n" + "\n".join(description_lines)
+                    description = f"{description_part}\n** = Dub production suspended until further notice.\n" + "\n".join(description_lines)
 
                     event = {
-                        "summary": summary,
+                        "summary": f"{emoji}{show['name']} (Suspended) [Latest Episode {latest_episode}/{total_ep or '?'}]",
                         "description": description,
-                        "start": {"date": event_date.strftime("%Y-%m-%d")},
-                        "end": {"date": event_date.strftime("%Y-%m-%d")},
-                        "colorId": upcoming_color
+                        "start": {"date": base_date.strftime("%Y-%m-%d")},
+                        "end": {"date": base_date.strftime("%Y-%m-%d")},
+                        "recurrence": ["RRULE:FREQ=WEEKLY"],
+                        "colorId": color_id
                     }
-                    upcoming_events.append(event)
+                    ongoing_events.append(event)
+            else:
+                for ep in range(latest_episode + 1, min(total_ep + 1, latest_episode + 11)):
+                    ep_date = base_date + timedelta(weeks=(ep - latest_episode - 1))
+                    if ep_date.date() >= today:
+                        description_lines = [f"Rating: {mal_info.get('rating', 'Not Listed')}"]
+                        if streaming:
+                            description_lines.append(f"Streaming: {', '.join(streaming)}")
+                        if mal_info.get("broadcast"):
+                            description_lines.append(f"Broadcast: {mal_info['broadcast']}")
+                        if mal_info.get("genres"):
+                            description_lines.append(f"Genres: {', '.join(mal_info['genres'])}")
+                        if mal_info.get("theme"):
+                            description_lines.append(f"Theme: {', '.join(mal_info['theme'])}")
+                        if mal_info.get("studios"):
+                            description_lines.append(f"Studios: {', '.join(mal_info['studios'])}")
+                        if mal_info.get("producers"):
+                            description_lines.append(f"Producers: {', '.join(mal_info['producers'])}")
+                        if mal_info.get("source"):
+                            description_lines.append(f"Source: {mal_info['source']}")
+                        if mal_info.get("demographic"):
+                            description_lines.append(f"Demographic: {mal_info['demographic']}")
+                        if mal_info.get("duration"):
+                            description_lines.append(f"Duration: {mal_info['duration']}")
+                        description = f"{description_part}\n" + "\n".join(description_lines) if description_lines else description_part
+
+                        event = {
+                            "summary": f"{emoji}{show['name']} S{(latest_episode // 100) + 1:02d}E{ep:02d} (Expected)",
+                            "description": description,
+                            "start": {"date": ep_date.strftime("%Y-%m-%d")},
+                            "end": {"date": ep_date.strftime("%Y-%m-%d")},
+                            "colorId": color_id
+                        }
+                        ongoing_events.append(event)
+    return ongoing_events
+
+async def process_upcoming_events(upcoming_data, metadata):
+    upcoming_events = []
+    current_date = datetime.now()
+    today = current_date.date()
+    available_colors = ["1", "2", "3", "5", "6", "7", "9", "10"]
+    upcoming_color = "11"
+    loop = asyncio.get_event_loop()
+    mal_infos = await process_mal_info(upcoming_data) if not metadata else {item["name"]: metadata.get(item["mal_link"]) for item in upcoming_data}
+    for item, mal_info in zip(upcoming_data, [mal_infos.get(item["name"], {}) for item in upcoming_data]):
+        if item["date"]:
+            event_date = datetime.strptime(item["date"], "%B %d, %Y").date()
+            if event_date >= today:
+                streaming = mal_info.get("streaming", [])
+                manual = MANUAL_STREAMING.get(item["name"])
+                if manual:
+                    main_provider = manual["provider"]
+                    emoji = manual["emoji"]
+                    description_part = f"[Dub: {manual['dub']}]" if manual.get("dub") else ""
+                else:
+                    main_provider = next((p for p in STREAMING_PROVIDERS if any(p.lower() == s.lower() for s in streaming)), None)
+                    emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
+                    description_part = ""
+                print(f"Upcoming: {item['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
+                summary = f"🎟️{item['name']}" if item["theatrical"] else f"{emoji}{item['name']}"
+                description_lines = [f"Rating: {mal_info.get('rating', 'Not Listed')}"]
+                if streaming:
+                    description_lines.append(f"Streaming: {', '.join(streaming)}")
+                if mal_info.get("broadcast"):
+                    description_lines.append(f"Broadcast: {mal_info['broadcast']}")
+                if mal_info.get("genres"):
+                    description_lines.append(f"Genres: {', '.join(mal_info['genres'])}")
+                if mal_info.get("theme"):
+                    description_lines.append(f"Theme: {', '.join(mal_info['theme'])}")
+                if mal_info.get("studios"):
+                    description_lines.append(f"Studios: {', '.join(mal_info['studios'])}")
+                if mal_info.get("producers"):
+                    description_lines.append(f"Producers: {', '.join(mal_info['producers'])}")
+                if mal_info.get("source"):
+                    description_lines.append(f"Source: {mal_info['source']}")
+                if mal_info.get("demographic"):
+                    description_lines.append(f"Demographic: {mal_info['demographic']}")
+                if mal_info.get("duration"):
+                    description_lines.append(f"Duration: {mal_info['duration']}")
+                description = f"{description_part}\n{'🎟️ * = These are theatrical releases and not home/digital releases.' if item['theatrical'] else ''}\n" + "\n".join(description_lines)
+
+                event = {
+                    "summary": summary,
+                    "description": description,
+                    "start": {"date": event_date.strftime("%Y-%m-%d")},
+                    "end": {"date": event_date.strftime("%Y-%m-%d")},
+                    "colorId": upcoming_color
+                }
+                upcoming_events.append(event)
     return upcoming_events
 
 # Daily update with Google Calendar
@@ -487,11 +485,11 @@ async def update_calendar():
     upcoming_data = parse_upcoming_events()
     metadata = await load_metadata()
     clear_future_events(service)
-    ongoing_events = process_ongoing_events(ongoing_data, metadata)
+    ongoing_events = await process_ongoing_events(ongoing_data, metadata)
     if ongoing_events:
         print(f"Inserting {len(ongoing_events)} ongoing events")
         batch_insert_events(service, ongoing_events)
-    upcoming_events = process_upcoming_events(upcoming_data, metadata)
+    upcoming_events = await process_upcoming_events(upcoming_data, metadata)
     if upcoming_events:
         print(f"Inserting {len(upcoming_events)} upcoming events")
         batch_insert_events(service, upcoming_events)
