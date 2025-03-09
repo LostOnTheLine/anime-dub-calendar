@@ -1,61 +1,52 @@
-name: Update Show Data
+name: Update Shows
+
 on:
   schedule:
-    - cron: "0 8 * * 0"  # 8 AM UTC every Sunday
-  workflow_dispatch:  # Manual trigger option
+    - cron: '0 9 * * *' # Runs daily at 9:00 UTC
+  workflow_dispatch: # Allows manual triggering
+
 jobs:
   update:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+
       - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Check initial database file status
+        run: echo "Initial database file status:" && ls -l shows.db
+
+      - name: Update shows
+        run: python -c "import main; import asyncio; asyncio.run(main.update_shows())"
+
+      - name: Check database file status after update
+        run: echo "Database file status after update:" && ls -l shows.db
+
+      - name: Configure Git
+        run: git config --global user.name "GitHub Action"
+
+      - name: Commit changes to shows.db
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Check initial database state
-        run: |
-          echo "Initial database file status:"
-          ls -lh shows.db || echo "shows.db does not exist yet"
-          if [ -f shows.db ]; then
-            sqlite3 shows.db "SELECT * FROM metadata LIMIT 5;" || echo "Failed to read database"
-          fi
-      - name: Update show data
-        run: |
-          python -c "import main; import asyncio; asyncio.run(main.update_shows())"
-      - name: Check database state after update
-        run: |
-          echo "Database file status after update:"
-          ls -lh shows.db
-          sqlite3 shows.db "SELECT * FROM metadata LIMIT 5;" || echo "Failed to read database"
-      - name: Commit changes
-        run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-          git status
           git add shows.db
-          if [ -n "$(git status --porcelain shows.db)" ]; then
-            git commit -m "Update show data from MAL [skip ci]"
-            git push
-            echo "Changes committed and pushed."
-          else
-            echo "No changes to commit in shows.db."
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Ignore __pycache__
+          git commit -m "Update shows.db [skip ci]" || echo "No changes to commit in shows.db."
+
+      - name: Ignore __pycache__ if not already present
         run: |
-          echo "__pycache__/" >> .gitignore
-          git add .gitignore
-          if [ -n "$(git status --porcelain .gitignore)" ]; then
-            git commit -m "Ignore __pycache__ [skip ci]"
-            git push
-            echo "Added __pycache__ to .gitignore."
+          if ! grep -Fxq "__pycache__/" .gitignore; then
+            echo "__pycache__/" >> .gitignore
+            git add .gitignore
+            git commit -m "Add __pycache__ to .gitignore [skip ci]" || echo "No changes to commit"
           else
-            echo "__pycache__ already ignored."
+            echo "__pycache__ already ignored in .gitignore"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push changes
+        run: git push
