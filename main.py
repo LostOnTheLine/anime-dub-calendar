@@ -81,12 +81,15 @@ def parse_ongoing_schedule():
     # Process each <li> in the top-level <ul> (each <li> represents a day)
     for li in ul_element.find_all('li', recursive=False):
         # Extract the day of the week (e.g., "Monday", "Tuesday")
-        day_text = li.find(string=True, recursive=False)
-        if day_text:
-            day_text = day_text.strip()
-            if day_text in day_map:
-                current_day = day_text
-                schedule[current_day] = []
+        # The day is the first non-tag text in the <li>
+        day_text = None
+        for content in li.contents:
+            if isinstance(content, str):
+                day_text = content.strip()
+                break
+        if day_text and day_text in day_map:
+            current_day = day_text
+            schedule[current_day] = []
 
         # Find the nested <ul> containing the shows for this day
         nested_ul = li.find('ul')
@@ -144,16 +147,29 @@ def parse_upcoming_events():
             })
     return upcoming
 
-# Scrape MAL for metadata (async) (unchanged)
+# Scrape MAL for metadata (async)
 async def fetch_mal_page(session, url):
     async with session.get(url, headers=headers) as response:
         return await response.text()
 
 async def get_mal_info(mal_link=None, name=None):
+    if not mal_link and not name:
+        logger.warning("No mal_link or name provided for MAL info retrieval.")
+        return None
+
+    # If mal_link is provided, extract the URL; otherwise, search using the name
     if mal_link:
-        mal_url = re.search(r'href="([^"]+)"', mal_link).group(1)
-        cache_key = mal_url
-    elif name:
+        match = re.search(r'href="([^"]+)"', mal_link)
+        if not match:
+            logger.warning(f"Invalid mal_link format: {mal_link}. Falling back to name search.")
+            mal_url = None
+        else:
+            mal_url = match.group(1)
+            cache_key = mal_url
+    else:
+        mal_url = None
+
+    if not mal_url and name:
         search_url = f"https://myanimelist.net/anime.php?q={requests.utils.quote(name)}&cat=anime"
         async with aiohttp.ClientSession() as session:
             search_response = await fetch_mal_page(session, search_url)
@@ -166,7 +182,9 @@ async def get_mal_info(mal_link=None, name=None):
         else:
             logger.warning(f"No MAL entry found for {name}")
             return None
-    else:
+
+    if not mal_url:
+        logger.warning(f"Could not determine MAL URL for name: {name}")
         return None
 
     if cache_key in MAL_CACHE:
