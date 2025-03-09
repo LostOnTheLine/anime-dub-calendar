@@ -3,7 +3,6 @@ name: Update Anime Dub Schedule
 on:
   schedule:
     - cron: "0 8 * * *"  # 8 AM GMT (UTC)
-    - cron: "0 20 * * *" # 8 PM GMT (UTC)
   workflow_dispatch:  # Manual trigger option
 
 jobs:
