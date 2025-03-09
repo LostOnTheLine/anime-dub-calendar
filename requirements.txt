@@ -1,5 +1,7 @@
-requests
-beautifulsoup4
-google-auth-oauthlib
-google-api-python-client
 aiohttp
+beautifulsoup4
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+aiosqlite
