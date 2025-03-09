@@ -188,13 +188,20 @@ async def get_mal_info(mal_link=None, name=None):
     return result
 
 # Google Calendar setup
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
 credentials_json = os.getenv("GOOGLE_CREDENTIALS")
-credentials_dict = json.loads(credentials_json)
-creds = service_account.Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
-service = build("calendar", "v3", credentials=creds)
-calendar_id = os.getenv("CALENDAR_ID")
-print(f"Calendar ID: {calendar_id}")
+if not credentials_json:
+    print("Warning: GOOGLE_CREDENTIALS environment variable is not set. Google Calendar integration will be skipped.")
+    service = None
+else:
+    try:
+        credentials_dict = json.loads(credentials_json)
+        creds = service_account.Credentials.from_service_account_info(credentials_dict, scopes=["https://www.googleapis.com/auth/calendar"])
+        service = build("calendar", "v3", credentials=creds)
+        calendar_id = os.getenv("CALENDAR_ID")
+        print(f"Calendar ID: {calendar_id}")
+    except Exception as e:
+        print(f"Error initializing Google Calendar service: {e}")
+        service = None
 
 # Color assignment
 available_colors = ["1", "2", "3", "5", "6", "7", "9", "10"]
@@ -213,26 +220,28 @@ def get_color_id(show_name, day_shows, used_colors):
 
 # Batch calendar updates
 def batch_insert_events(events):
-    batch = service.new_batch_http_request()
-    for event in events:
-        batch.add(service.events().insert(calendarId=calendar_id, body=event))
-    batch.execute()
+    if service:
+        batch = service.new_batch_http_request()
+        for event in events:
+            batch.add(service.events().insert(calendarId=calendar_id, body=event))
+        batch.execute()
 
 # Clear future events only
 current_date = datetime.now()
 today = current_date.date()
-page_token = None
-while True:
-    events = service.events().list(calendarId=calendar_id, pageToken=page_token).execute()
-    for event in events["items"]:
-        start = event["start"].get("date") or event["start"].get("dateTime")
-        if start:
-            event_date = datetime.strptime(start[:10], "%Y-%m-%d").date()
-            if event_date > today:  # Preserve today and past events
-                service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
-    page_token = events.get("nextPageToken")
-    if not page_token:
-        break
+if service:
+    page_token = None
+    while True:
+        events = service.events().list(calendarId=calendar_id, pageToken=page_token).execute()
+        for event in events["items"]:
+            start = event["start"].get("date") or event["start"].get("dateTime")
+            if start:
+                event_date = datetime.strptime(start[:10], "%Y-%m-%d").date()
+                if event_date > today:  # Preserve today and past events
+                    service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
+        page_token = events.get("nextPageToken")
+        if not page_token:
+            break
 
 # Add all-day events for ongoing schedule
 def next_weekday(start_date, weekday):
@@ -484,17 +493,18 @@ try:
     ongoing_data = loop.run_until_complete(load_ongoing_shows())
     upcoming_data = loop.run_until_complete(load_upcoming_events())
 
-    ongoing_events = process_ongoing_events(ongoing_data)
-    if ongoing_events:
-        print(f"Inserting {len(ongoing_events)} ongoing events")
-        batch_insert_events(ongoing_events)
+    if service:
+        ongoing_events = process_ongoing_events(ongoing_data)
+        if ongoing_events:
+            print(f"Inserting {len(ongoing_events)} ongoing events")
+            batch_insert_events(ongoing_events)
 
-    upcoming_events = process_upcoming_events(upcoming_data)
-    if upcoming_events:
-        print(f"Inserting {len(upcoming_events)} upcoming events")
-        batch_insert_events(upcoming_events)
+        upcoming_events = process_upcoming_events(upcoming_data)
+        if upcoming_events:
+            print(f"Inserting {len(upcoming_events)} upcoming events")
+            batch_insert_events(upcoming_events)
 
-    print("Calendar updated successfully!")
+    print("Calendar updated successfully (or skipped if no credentials)!")
 except Exception as e:
     print(f"Error during execution: {e}")
     raise
