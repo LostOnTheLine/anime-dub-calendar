@@ -197,7 +197,9 @@ async def process_mal_info(shows):
         name = show.get("name", show.get("title", "Unknown Show"))
         tasks.append(get_mal_info(mal_link, name))
     results = await asyncio.gather(*tasks)
-    return {show["name"]: info for show, info in zip(shows, results) if info}
+    mal_info = {show["name"]: info for show, info in zip(shows, results) if info}
+    logger.info(f"Processed MAL info for {len(mal_info)} shows: {list(mal_info.keys())[:5]}")  # Log first 5 keys
+    return mal_info
 
 # Load metadata from SQLite with verification
 async def load_metadata():
@@ -259,6 +261,7 @@ async def update_metadata(shows):
                 mal_link = show.get("mal_link")
                 if mal_link and mal_info.get(show["name"]):
                     info = mal_info[show["name"]]
+                    logger.info(f"Attempting to insert: {show['name']} with mal_link {mal_link} and streaming {info.get('streaming', [])}")
                     await db.execute("""
                         INSERT OR REPLACE INTO metadata (mal_link, streaming, broadcast, producers, studios, source, genres, theme, demographic, duration, rating)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -277,6 +280,8 @@ async def update_metadata(shows):
                     ))
                     inserted_rows += 1
                     logger.info(f"Inserted/Updated metadata for {show['name']} with mal_link {mal_link}")
+                else:
+                    logger.warning(f"Skipped {show['name']} due to missing mal_link or mal_info")
             await db.commit()
             logger.info(f"Attempted to insert {inserted_rows} rows into metadata table")
             # Verify insertion
