@@ -24,11 +24,25 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add shows.db
-          if [ -n "$(git status --porcelain)" ]; then
+          if [ -n "$(git status --porcelain shows.db)" ]; then
             git commit -m "Update show data from MAL [skip ci]"
             git push
+            echo "Changes committed and pushed."
           else
-            echo "No changes to commit"
+            echo "No changes to commit."
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Ignore __pycache__
+        run: |
+          echo "__pycache__/" >> .gitignore
+          git add .gitignore
+          if [ -n "$(git status --porcelain .gitignore)" ]; then
+            git commit -m "Ignore __pycache__ [skip ci]"
+            git push
+            echo "Added __pycache__ to .gitignore."
+          else
+            echo "__pycache__ already ignored."
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
