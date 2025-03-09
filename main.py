@@ -66,52 +66,54 @@ def parse_ongoing_schedule():
     current_day = None
     day_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
 
-    # Find the section for "Currently Streaming SimulDubbed Anime"
-    streaming_section = soup.find(string=re.compile(r"Currently Streaming SimulDubbed Anime", re.IGNORECASE))
+    # Find the section for "Currently Streaming SimulDubbed Anime" with flexible matching
+    streaming_section = soup.find(lambda tag: tag.name == 'b' and re.search(r"Currently\s+Streaming\s+SimulDubbed\s+Anime", tag.text, re.IGNORECASE))
     if not streaming_section:
         logger.warning("Could not find 'Currently Streaming SimulDubbed Anime' section.")
         return schedule
 
-    td_parent = streaming_section.find_parent('td')
-    if not td_parent:
-        logger.warning("Could not find parent <td> for 'Currently Streaming SimulDubbed Anime'.")
+    # Find the next <ul> element after the section title
+    ul_element = streaming_section.find_next('ul')
+    if not ul_element:
+        logger.warning("No top-level <ul> element found after 'Currently Streaming SimulDubbed Anime' section.")
         return schedule
 
-    ul_elements = td_parent.find_all('ul', recursive=False)
-    if not ul_elements:
-        logger.warning("No <ul> elements found in the streaming section.")
-        return schedule
+    # Process each <li> in the top-level <ul> (each <li> represents a day)
+    for li in ul_element.find_all('li', recursive=False):
+        # Extract the day of the week (e.g., "Monday", "Tuesday")
+        day_text = li.find(string=True, recursive=False)
+        if day_text:
+            day_text = day_text.strip()
+            if day_text in day_map:
+                current_day = day_text
+                schedule[current_day] = []
 
-    for ul in ul_elements:
-        # Check if this <ul> contains a day of the week
-        day_text = ul.find_previous(string=True, text=True).strip()
-        if day_text in day_map:
-            current_day = day_text
-            schedule[current_day] = []
-
-        # Find all <li> elements within the current <ul>
-        for li in ul.find_all('li', recursive=False):
-            show_info = li.get_text(strip=True)
-            if show_info and current_day and "Episodes:" in show_info:
-                match = re.match(r"(.+?)\s*\(Episodes:\s*(\d+)(?:/(\d+|\?{3}))?\)\s*(\*\*)?", show_info)
-                if match:
-                    name, current_ep, total_ep, suspended = match.groups()
-                    current_ep = int(current_ep)
-                    if total_ep == "???":
-                        total_ep = 24 if current_ep < 20 else 56
+        # Find the nested <ul> containing the shows for this day
+        nested_ul = li.find('ul')
+        if nested_ul and current_day:
+            # Process each <li> in the nested <ul> (each <li> represents a show)
+            for show_li in nested_ul.find_all('li', recursive=False):
+                show_info = show_li.get_text(strip=True)
+                if show_info and "Episodes:" in show_info:
+                    match = re.match(r"(.+?)\s*\(Episodes:\s*(\d+)(?:/(\d+|\?{3}))?\)\s*(\*\*)?", show_info)
+                    if match:
+                        name, current_ep, total_ep, suspended = match.groups()
+                        current_ep = int(current_ep)
+                        if total_ep == "???":
+                            total_ep = 24 if current_ep < 20 else 56
+                        else:
+                            total_ep = int(total_ep) if total_ep and total_ep != "?" else None
+                        mal_link = show_li.find('a', href=re.compile(r"https://myanimelist.net/anime/"))
+                        mal_link = mal_link['href'] if mal_link else None
+                        schedule[current_day].append({
+                            "name": name.strip(),
+                            "current": current_ep,
+                            "total": total_ep,
+                            "suspended": suspended == "**",
+                            "mal_link": mal_link
+                        })
                     else:
-                        total_ep = int(total_ep) if total_ep and total_ep != "?" else None
-                    mal_link = li.find('a', href=re.compile(r"https://myanimelist.net/anime/"))
-                    mal_link = mal_link['href'] if mal_link else None
-                    schedule[current_day].append({
-                        "name": name.strip(),
-                        "current": current_ep,
-                        "total": total_ep,
-                        "suspended": suspended == "**",
-                        "mal_link": mal_link
-                    })
-                else:
-                    logger.warning(f"Could not parse show info from: {show_info}")
+                        logger.warning(f"Could not parse show info from: {show_info}")
 
     logger.info(f"Parsed ongoing schedule with {sum(len(shows) for shows in schedule.values())} shows across {len(schedule)} days.")
     return schedule
@@ -311,7 +313,7 @@ async def update_metadata(shows):
             # Verify insertion
             cursor = await db.execute("SELECT COUNT(*) FROM metadata")
             row_count = (await cursor.fetchone())[0]
-            logger.info(f"Database now contains {row_count} days")
+            logger.info(f"Database now contains {row_count} rows")
         except Exception as e:
             logger.error(f"Database error: {e}")
             raise
