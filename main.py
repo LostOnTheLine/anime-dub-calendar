@@ -8,6 +8,11 @@ import os
 import json
 import hashlib
 import aiosqlite
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Manual mapping for streaming providers (override or add when MAL data is missing/inaccurate)
 MANUAL_STREAMING = {
@@ -44,16 +49,16 @@ MAL_CACHE = {}
 url = "https://myanimelist.net/forum/?topicid=1692966"
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
 response = requests.get(url, headers=headers)
-print(f"Status Code: {response.status_code}")
+logger.info(f"Status Code: {response.status_code}")
 soup = BeautifulSoup(response.content, "html.parser")
 first_comment = soup.select_one(".forum-topic-message .content")
 
 if first_comment is None:
-    print("Error: Could not find '.forum-topic-message .content' in the page")
-    print(f"Page snippet: {response.text[:500]}")
+    logger.error("Error: Could not find '.forum-topic-message .content' in the page")
+    logger.info(f"Page snippet: {response.text[:500]}")
     exit(1)
 
-print(f"First comment snippet: {first_comment.text[:200]}")
+logger.info(f"First comment snippet: {first_comment.text[:200]}")
 lines = first_comment.text.strip().split("\n")
 
 # Parse ongoing schedule from forum
@@ -133,16 +138,16 @@ async def get_mal_info(mal_link=None, name=None):
             mal_url = f"https://myanimelist.net/anime/{mal_id}/{requests.utils.quote(name.replace(' ', '_'))}"
             cache_key = mal_url
         else:
-            print(f"No MAL entry found for {name}")
+            logger.warning(f"No MAL entry found for {name}")
             return None
     else:
         return None
 
     if cache_key in MAL_CACHE:
-        print(f"Cache hit for {cache_key}")
+        logger.info(f"Cache hit for {cache_key}")
         return MAL_CACHE[cache_key]
 
-    print(f"Fetching MAL page: {mal_url}")
+    logger.info(f"Fetching MAL page: {mal_url}")
     async with aiohttp.ClientSession() as session:
         mal_response = await fetch_mal_page(session, mal_url)
     mal_soup = BeautifulSoup(mal_response, "html.parser")
@@ -152,7 +157,7 @@ async def get_mal_info(mal_link=None, name=None):
     if streaming_div:
         for item in streaming_div.select(".broadcast-item .caption"):
             streaming_list.append(item.text.strip())
-    print(f"Streaming providers: {streaming_list}")
+    logger.info(f"Streaming providers: {streaming_list}")
 
     broadcast = mal_soup.select_one(".spaceit_pad:contains('Broadcast:')")
     broadcast = broadcast.text.strip().replace("Broadcast:", "").strip() if broadcast else ""
@@ -231,27 +236,49 @@ async def load_metadata():
 async def update_metadata(shows):
     mal_info = await process_mal_info(shows)
     async with aiosqlite.connect("shows.db") as db:
-        for show in shows:
-            mal_link = show.get("mal_link")
-            if mal_link and mal_info.get(show["name"]):
-                info = mal_info[show["name"]]
-                await db.execute("""
-                    INSERT OR REPLACE INTO metadata (mal_link, streaming, broadcast, producers, studios, source, genres, theme, demographic, duration, rating)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    mal_link,
-                    json.dumps(info["streaming"]),
-                    info["broadcast"],
-                    json.dumps(info["producers"]),
-                    json.dumps(info["studios"]),
-                    info["source"],
-                    json.dumps(info["genres"]),
-                    json.dumps(info["theme"]),
-                    info["demographic"],
-                    info["duration"],
-                    info["rating"]
-                ))
-        await db.commit()
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    mal_link TEXT PRIMARY KEY,
+                    streaming TEXT,
+                    broadcast TEXT,
+                    producers TEXT,
+                    studios TEXT,
+                    source TEXT,
+                    genres TEXT,
+                    theme TEXT,
+                    demographic TEXT,
+                    duration TEXT,
+                    rating TEXT
+                )
+            """)
+            for show in shows:
+                mal_link = show.get("mal_link")
+                if mal_link and mal_info.get(show["name"]):
+                    info = mal_info[show["name"]]
+                    await db.execute("""
+                        INSERT OR REPLACE INTO metadata (mal_link, streaming, broadcast, producers, studios, source, genres, theme, demographic, duration, rating)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        mal_link,
+                        json.dumps(info["streaming"]),
+                        info["broadcast"],
+                        json.dumps(info["producers"]),
+                        json.dumps(info["studios"]),
+                        info["source"],
+                        json.dumps(info["genres"]),
+                        json.dumps(info["theme"]),
+                        info["demographic"],
+                        info["duration"],
+                        info["rating"]
+                    ))
+                    logger.info(f"Inserted/Updated metadata for {show['name']} with mal_link {mal_link}")
+            await db.commit()
+            logger.info("Database commit successful")
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            raise
+    logger.info("Metadata update process completed")
 
 # Weekly update (no Google Calendar dependency)
 async def update_shows():
@@ -262,7 +289,7 @@ async def update_shows():
         all_shows.extend(shows)
     all_shows.extend(upcoming_data)
     await update_metadata(all_shows)
-    print("Metadata updated successfully!")
+    logger.info("Metadata updated successfully!")
 
 # Google Calendar-specific functions (only for update-calendar)
 def initialize_calendar():
@@ -270,20 +297,20 @@ def initialize_calendar():
     from google.oauth2 import service_account
     credentials_json = os.getenv("GOOGLE_CREDENTIALS")
     if not credentials_json:
-        print("Warning: GOOGLE_CREDENTIALS not set. Skipping Google Calendar integration.")
+        logger.warning("Warning: GOOGLE_CREDENTIALS not set. Skipping Google Calendar integration.")
         return None
     try:
         credentials_dict = json.loads(credentials_json)
         creds = service_account.Credentials.from_service_account_info(credentials_dict, scopes=["https://www.googleapis.com/auth/calendar"])
         service = build("calendar", "v3", credentials=creds)
         calendar_id = os.getenv("CALENDAR_ID")
-        print(f"Calendar ID: {calendar_id}")
+        logger.info(f"Calendar ID: {calendar_id}")
         return service
     except Exception as e:
-        print(f"Error initializing Google Calendar: {e}")
+        logger.error(f"Error initializing Google Calendar: {e}")
         return None
 
-async def get_color_id(show_name, day_shows, used_colors):
+def get_color_id(show_name, day_shows, used_colors):
     hash_value = int(hashlib.md5(show_name.encode()).hexdigest(), 16)
     color_index = hash_value % len(available_colors)
     base_color = available_colors[color_index]
@@ -333,7 +360,6 @@ async def process_ongoing_events(ongoing_data, metadata):
     for day, shows in ongoing_data.items():
         day_index = day_map[day]
         used_colors = set()
-        loop = asyncio.get_event_loop()
         mal_infos = await process_mal_info(shows) if not metadata else {show["name"]: metadata.get(show["mal_link"]) for show in shows}
         for show, mal_info in zip(shows, [mal_infos.get(show["name"], {}) for show in shows]):
             latest_episode = show["current"]
@@ -349,8 +375,8 @@ async def process_ongoing_events(ongoing_data, metadata):
                 main_provider = next((p for p in STREAMING_PROVIDERS if any(p.lower() == s.lower() for s in streaming)), None)
                 emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
                 description_part = ""
-            print(f"Show: {show['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
-            color_id = suspended_color if show["suspended"] else await get_color_id(show["name"], shows, used_colors)
+            logger.info(f"Show: {show['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
+            color_id = suspended_color if show["suspended"] else get_color_id(show["name"], shows, used_colors)
             if not show["suspended"]:
                 used_colors.add(color_id)
             if show["suspended"]:
@@ -426,7 +452,6 @@ async def process_upcoming_events(upcoming_data, metadata):
     today = current_date.date()
     available_colors = ["1", "2", "3", "5", "6", "7", "9", "10"]
     upcoming_color = "11"
-    loop = asyncio.get_event_loop()
     mal_infos = await process_mal_info(upcoming_data) if not metadata else {item["name"]: metadata.get(item["mal_link"]) for item in upcoming_data}
     for item, mal_info in zip(upcoming_data, [mal_infos.get(item["name"], {}) for item in upcoming_data]):
         if item["date"]:
@@ -442,7 +467,7 @@ async def process_upcoming_events(upcoming_data, metadata):
                     main_provider = next((p for p in STREAMING_PROVIDERS if any(p.lower() == s.lower() for s in streaming)), None)
                     emoji = STREAMING_PROVIDERS.get(main_provider, "⛔") if main_provider else "⛔"
                     description_part = ""
-                print(f"Upcoming: {item['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
+                logger.info(f"Upcoming: {item['name']}, Main Provider: {main_provider}, Emoji: {emoji}")
                 summary = f"🎟️{item['name']}" if item["theatrical"] else f"{emoji}{item['name']}"
                 description_lines = [f"Rating: {mal_info.get('rating', 'Not Listed')}"]
                 if streaming:
@@ -479,7 +504,7 @@ async def process_upcoming_events(upcoming_data, metadata):
 async def update_calendar():
     service = initialize_calendar()
     if not service:
-        print("Skipping calendar update due to missing credentials.")
+        logger.info("Skipping calendar update due to missing credentials.")
         return
     ongoing_data = parse_ongoing_schedule()
     upcoming_data = parse_upcoming_events()
@@ -487,13 +512,13 @@ async def update_calendar():
     clear_future_events(service)
     ongoing_events = await process_ongoing_events(ongoing_data, metadata)
     if ongoing_events:
-        print(f"Inserting {len(ongoing_events)} ongoing events")
+        logger.info(f"Inserting {len(ongoing_events)} ongoing events")
         batch_insert_events(service, ongoing_events)
     upcoming_events = await process_upcoming_events(upcoming_data, metadata)
     if upcoming_events:
-        print(f"Inserting {len(upcoming_events)} upcoming events")
+        logger.info(f"Inserting {len(upcoming_events)} upcoming events")
         batch_insert_events(service, upcoming_events)
-    print("Calendar updated successfully!")
+    logger.info("Calendar updated successfully!")
 
 if __name__ == "__main__":
     import sys
