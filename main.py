@@ -457,6 +457,27 @@ def process_upcoming_events(upcoming_data):
                 upcoming_events.append(event)
     return upcoming_events
 
+# Update SQLite database (for weekly workflow)
+async def update_shows():
+    ongoing_data = parse_ongoing_schedule()
+    upcoming_data = parse_upcoming_events()
+    async with aiosqlite.connect("shows.db") as db:
+        await db.execute("DELETE FROM ongoing")
+        await db.execute("DELETE FROM upcoming")
+        await db.commit()
+        for day, shows in ongoing_data.items():
+            for show in shows:
+                await db.execute(
+                    "INSERT INTO ongoing (day, name, current, total, suspended, mal_link) VALUES (?, ?, ?, ?, ?, ?)",
+                    (day, show["name"], show["current"], show["total"], int(show["suspended"]), show["mal_link"])
+                )
+        for show in upcoming_data:
+            await db.execute(
+                "INSERT INTO upcoming (name, date, theatrical, section, mal_link) VALUES (?, ?, ?, ?, ?)",
+                (show["name"], show["date"], int(show["theatrical"]), show["section"], show["mal_link"])
+            )
+        await db.commit()
+
 try:
     # Load show data from SQLite
     loop = asyncio.get_event_loop()
