@@ -1,0 +1,19 @@
+ongoing:
+  Monday:
+    - name: My Happy Marriage Season 2
+      current: 1
+      total: 12
+      suspended: false
+      mal_link: '<a href="https://myanimelist.net/anime/56701/My_Happy_Marriage_Season_2">My Happy Marriage Season 2</a>'
+  Tuesday:
+    - name: Headhunted to Another World: From Salaryman to Big Four!
+      current: 3
+      total: 12
+      suspended: false
+      mal_link: '<a href="https://myanimelist.net/anime/59349/Headhunted_to_Another_World%3A_From_Salaryman_to_Big_Four%21">Headhunted to Another World</a>'
+upcoming:
+  - name: Demon Slayer: Kimetsu no Yaiba - To the Hashira Training
+    date: "March 15, 2025"
+    theatrical: true
+    section: "Upcoming Dubbed Anime"
+    mal_link: '<a href="https://myanimelist.net/anime/51111/Demon_Slayer__Kimetsu_no_Yaiba_-_To_the_Hashira_Training">Demon Slayer</a>'
