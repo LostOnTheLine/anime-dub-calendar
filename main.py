@@ -12,7 +12,7 @@ import hashlib
 
 # Manual mapping for streaming providers (override or add when MAL data is missing/inaccurate)
 MANUAL_STREAMING = {
-    "Yu-Gi-Oh: Go Rush": {"provider": "DisneyNow", "emoji": "🔱", "dub": "DisneyNow"},
+    "Yu-Gi-Oh: Go Rush": {"provider": "DisneyNow", "emoji": "🐭", "dub": "DisneyNow"},
 }
 
 # Streaming provider emojis and USA prioritization (order defines priority)
@@ -133,7 +133,7 @@ async def get_mal_info(mal_link=None, title=None):
             print(f"No MAL entry found for {title}")
             return {"streaming": [], "broadcast": "", "producers": [], "studios": [], "source": "", "genres": [], "theme": [], "demographic": "", "duration": "", "rating": ""}
     else:
-        return {"streaming": [], "broadcast": "", "producers": [], "studios": [], "source": "", "genres": [], "theme": [], "demographic": "", "duration": "", "rating": ""}
+        return {"streaming": [], "broadcast": "", "producers": [], "studios": [], "source": [], "genres": [], "theme": [], "demographic": "", "duration": "", "rating": ""}
 
     if cache_key in MAL_CACHE:
         print(f"Cache hit for {cache_key}")
