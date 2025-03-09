@@ -16,20 +16,33 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Check initial database state
+        run: |
+          echo "Initial database file status:"
+          ls -lh shows.db || echo "shows.db does not exist yet"
+          if [ -f shows.db ]; then
+            sqlite3 shows.db "SELECT * FROM metadata LIMIT 5;" || echo "Failed to read database"
+          fi
       - name: Update show data
         run: |
           python -c "import main; import asyncio; asyncio.run(main.update_shows())"
+      - name: Check database state after update
+        run: |
+          echo "Database file status after update:"
+          ls -lh shows.db
+          sqlite3 shows.db "SELECT * FROM metadata LIMIT 5;" || echo "Failed to read database"
       - name: Commit changes
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
+          git status
           git add shows.db
           if [ -n "$(git status --porcelain shows.db)" ]; then
             git commit -m "Update show data from MAL [skip ci]"
             git push
             echo "Changes committed and pushed."
           else
-            echo "No changes to commit."
+            echo "No changes to commit in shows.db."
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
