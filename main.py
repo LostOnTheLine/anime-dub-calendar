@@ -159,19 +159,20 @@ async def get_mal_info(mal_link=None, name=None):
             streaming_list.append(item.text.strip())
     logger.info(f"Streaming providers: {streaming_list}")
 
-    broadcast = mal_soup.select_one(".spaceit_pad:contains('Broadcast:')")
+    # Replace deprecated :contains with :-soup-contains
+    broadcast = mal_soup.select_one(".spaceit_pad:-soup-contains('Broadcast:')")
     broadcast = broadcast.text.strip().replace("Broadcast:", "").strip() if broadcast else ""
-    producers = [a.text for a in mal_soup.select(".spaceit_pad:contains('Producers:') a")] if mal_soup.select_one(".spaceit_pad:contains('Producers:')") else []
-    studios = [a.text for a in mal_soup.select(".spaceit_pad:contains('Studios:') a")] if mal_soup.select_one(".spaceit_pad:contains('Studios:')") else []
-    source = mal_soup.select_one(".spaceit_pad:contains('Source:') a")
-    source = source.text.strip() if source else mal_soup.select_one(".spaceit_pad:contains('Source:')").text.strip().replace("Source:", "").strip() if mal_soup.select_one(".spaceit_pad:contains('Source:')") else ""
-    genres = [a.text for a in mal_soup.select(".spaceit_pad:contains('Genres:') a")] if mal_soup.select_one(".spaceit_pad:contains('Genres:')") else []
-    theme = [a.text for a in mal_soup.select(".spaceit_pad:contains('Theme:') a")] if mal_soup.select_one(".spaceit_pad:contains('Theme:')") else []
-    demographic = mal_soup.select_one(".spaceit_pad:contains('Demographic:') a")
-    demographic = demographic.text if demographic else mal_soup.select_one(".spaceit_pad:contains('Demographic:')").text.strip().replace("Demographic:", "").strip() if mal_soup.select_one(".spaceit_pad:contains('Demographic:')") else ""
-    duration = mal_soup.select_one(".spaceit_pad:contains('Duration:')")
+    producers = [a.text for a in mal_soup.select(".spaceit_pad:-soup-contains('Producers:') a")] if mal_soup.select_one(".spaceit_pad:-soup-contains('Producers:')") else []
+    studios = [a.text for a in mal_soup.select(".spaceit_pad:-soup-contains('Studios:') a")] if mal_soup.select_one(".spaceit_pad:-soup-contains('Studios:')") else []
+    source = mal_soup.select_one(".spaceit_pad:-soup-contains('Source:') a")
+    source = source.text.strip() if source else mal_soup.select_one(".spaceit_pad:-soup-contains('Source:')").text.strip().replace("Source:", "").strip() if mal_soup.select_one(".spaceit_pad:-soup-contains('Source:')") else ""
+    genres = [a.text for a in mal_soup.select(".spaceit_pad:-soup-contains('Genres:') a")] if mal_soup.select_one(".spaceit_pad:-soup-contains('Genres:')") else []
+    theme = [a.text for a in mal_soup.select(".spaceit_pad:-soup-contains('Theme:') a")] if mal_soup.select_one(".spaceit_pad:-soup-contains('Theme:')") else []
+    demographic = mal_soup.select_one(".spaceit_pad:-soup-contains('Demographic:') a")
+    demographic = demographic.text if demographic else mal_soup.select_one(".spaceit_pad:-soup-contains('Demographic:')").text.strip().replace("Demographic:", "").strip() if mal_soup.select_one(".spaceit_pad:-soup-contains('Demographic:')") else ""
+    duration = mal_soup.select_one(".spaceit_pad:-soup-contains('Duration:')")
     duration = duration.text.strip().replace("Duration:", "").strip() if duration else ""
-    rating = mal_soup.select_one(".spaceit_pad:contains('Rating:')")
+    rating = mal_soup.select_one(".spaceit_pad:-soup-contains('Rating:')")
     rating = rating.text.strip().replace("Rating:", "").strip() if rating else "Not Listed"
 
     result = {
@@ -198,7 +199,7 @@ async def process_mal_info(shows):
     results = await asyncio.gather(*tasks)
     return {show["name"]: info for show, info in zip(shows, results) if info}
 
-# Load metadata from SQLite
+# Load metadata from SQLite with verification
 async def load_metadata():
     async with aiosqlite.connect("shows.db") as db:
         await db.execute("""
@@ -219,6 +220,7 @@ async def load_metadata():
         await db.commit()
         cursor = await db.execute("SELECT mal_link, streaming, broadcast, producers, studios, source, genres, theme, demographic, duration, rating FROM metadata")
         rows = await cursor.fetchall()
+        logger.info(f"Loaded {len(rows)} rows from metadata table")
         return {row[0]: {
             "streaming": json.loads(row[1]) if row[1] else [],
             "broadcast": row[2] if row[2] else "",
@@ -232,7 +234,7 @@ async def load_metadata():
             "rating": row[10] if row[10] else ""
         } for row in rows}
 
-# Update metadata in SQLite
+# Update metadata in SQLite with detailed logging
 async def update_metadata(shows):
     mal_info = await process_mal_info(shows)
     async with aiosqlite.connect("shows.db") as db:
@@ -252,6 +254,7 @@ async def update_metadata(shows):
                     rating TEXT
                 )
             """)
+            inserted_rows = 0
             for show in shows:
                 mal_link = show.get("mal_link")
                 if mal_link and mal_info.get(show["name"]):
@@ -272,9 +275,14 @@ async def update_metadata(shows):
                         info["duration"],
                         info["rating"]
                     ))
+                    inserted_rows += 1
                     logger.info(f"Inserted/Updated metadata for {show['name']} with mal_link {mal_link}")
             await db.commit()
-            logger.info("Database commit successful")
+            logger.info(f"Attempted to insert {inserted_rows} rows into metadata table")
+            # Verify insertion
+            cursor = await db.execute("SELECT COUNT(*) FROM metadata")
+            row_count = (await cursor.fetchone())[0]
+            logger.info(f"Database now contains {row_count} rows")
         except Exception as e:
             logger.error(f"Database error: {e}")
             raise
@@ -288,6 +296,7 @@ async def update_shows():
     for day, shows in ongoing_data.items():
         all_shows.extend(shows)
     all_shows.extend(upcoming_data)
+    logger.info(f"Processing {len(all_shows)} shows")
     await update_metadata(all_shows)
     logger.info("Metadata updated successfully!")
 
@@ -444,6 +453,7 @@ async def process_ongoing_events(ongoing_data, metadata):
                             "colorId": color_id
                         }
                         ongoing_events.append(event)
+    logger.info(f"Processed {len(ongoing_events)} ongoing events")
     return ongoing_events
 
 async def process_upcoming_events(upcoming_data, metadata):
@@ -498,6 +508,7 @@ async def process_upcoming_events(upcoming_data, metadata):
                     "colorId": upcoming_color
                 }
                 upcoming_events.append(event)
+    logger.info(f"Processed {len(upcoming_events)} upcoming events")
     return upcoming_events
 
 # Daily update with Google Calendar
