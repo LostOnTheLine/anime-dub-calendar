@@ -14,8 +14,12 @@ def scrape_forum_post():
         return None
 
     # Extract last modified time
-    mod_time = post.find("span", {"class": "modtime"}).text
-    last_updated = post.find("b", text=re.compile("Last Updated:")).next_sibling.strip()
+    mod_time_elem = post.find("span", {"class": "modtime"})
+    mod_time = mod_time_elem.text if mod_time_elem else "Unknown"
+
+    # Extract last updated date with fallback
+    last_updated_elem = post.find("b", text=re.compile("Last Updated:"))
+    last_updated = last_updated_elem.next_sibling.strip() if last_updated_elem and last_updated_elem.next_sibling else "Unknown"
 
     # Parse anime lists
     content = post.find("td").text
@@ -66,13 +70,13 @@ def scrape_forum_post():
 
 def load_cached_data():
     try:
-        with open("data/parsed_data.yaml", "r") as f:
+        with open("/data/parsed_data.yaml", "r") as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
         return {}
 
 def save_cached_data(data):
-    with open("data/parsed_data.yaml", "w") as f:
+    with open("/data/parsed_data.yaml", "w") as f:
         yaml.safe_dump(data, f)
 
 def needs_update(cached, new):

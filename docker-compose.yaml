@@ -6,4 +6,6 @@ services:
       - dub_streaming_50607=DisneyNow
     volumes:
       - /volume1/docker/metadata_scraper/data:/data
-    restart: unless-stopped  # Ensures it restarts unless explicitly stopped in Portainer
+    ports:
+      - "5000:5000"  # Expose Flask app
+    restart: unless-stopped
