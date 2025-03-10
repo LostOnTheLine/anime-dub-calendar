@@ -1,0 +1,9 @@
+services:
+  metadata-scraper:
+    image: ghcr.io/lostontheline/anime-dub-calendar:latest
+    container_name: metadata_scraper
+    environment:
+      - dub_streaming_50607=DisneyNow
+    volumes:
+      - /volume1/docker/metadata_scraper/data:/data
+    restart: unless-stopped  # Ensures it restarts unless explicitly stopped in Portainer

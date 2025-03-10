@@ -1,30 +1,41 @@
-name: Update Anime Dub Schedule
+name: Update Anime Dub Calendar
+
 on:
   schedule:
-    - cron: "0 8 * * *"  # 8 AM UTC (midnight PST)
-  workflow_dispatch:  # Manual trigger option
+    - cron: '0 8 * * *'  # 8:00 AM UTC daily
+  workflow_dispatch:  # Manual trigger
+
 jobs:
-  update:
+  update-calendar:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          ref: Grok
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-      - name: Cache pip dependencies
-        id: cache-pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}-${{ hashFiles('main.py') }}
-          restore-keys: ${{ runner.os }}-pip-
+          python-version: '3.11'
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Run script
+
+      - name: Run calendar updater
         env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           CALENDAR_ID: ${{ secrets.CALENDAR_ID }}
-        run: python main.py
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" | base64 -d > credentials.json
+          python src/calendar_updater.py
+          rm credentials.json  # Remove temp file to avoid exposure
+
+      - name: Commit updated data
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add data/parsed_data.yaml
+          git commit -m "Update parsed data - $(date -u +%Y-%m-%d)" || echo "No changes to commit"
+          git push
