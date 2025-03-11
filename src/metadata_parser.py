@@ -10,14 +10,14 @@ import requests
 from bs4 import BeautifulSoup
 
 REPO_URL = "https://github.com/LostOnTheLine/anime-dub-calendar.git"
-REPO_DIR = "/data"
+REPO_DIR = "/app/repo"
 
 def git_setup():
-    """Set up the Git repository in /data."""
-    # Ensure /data exists
+    """Set up the Git repository in /app/repo."""
+    # Ensure /app/repo exists
     os.makedirs(REPO_DIR, exist_ok=True)
 
-    # Check if /data is already a Git repository
+    # Check if /app/repo is already a Git repository
     if not os.path.exists(os.path.join(REPO_DIR, ".git")):
         print(f"Cloning repository into {REPO_DIR}...")
         try:
