@@ -6,48 +6,78 @@ from web_interface import run_web_app
 import threading
 import os
 import subprocess
+import requests
+from bs4 import BeautifulSoup
 
 REPO_URL = "https://github.com/LostOnTheLine/anime-dub-calendar.git"
 REPO_DIR = "/data"
 
 def git_setup():
-    os.chdir(REPO_DIR)
-    if not os.path.exists(".git"):
-        subprocess.run(["git", "clone", REPO_URL, "."], check=True)
-    subprocess.run(["git", "config", "user.name", "Docker Container"], check=True)
-    subprocess.run(["git", "config", "user.email", "docker@local"], check=True)
-    token = os.getenv("GITHUB_TOKEN")
-    if token:
-        subprocess.run(["git", "remote", "set-url", "origin", f"https://{token}@github.com/LostOnTheLine/anime-dub-calendar.git"], check=True)
-    else:
-        print("Warning: GITHUB_TOKEN not set, Git operations may fail")
-    # Ensure Grok branch
-    subprocess.run(["git", "fetch", "origin"], check=True)
-    subprocess.run(["git", "checkout", "Grok"], check=True)
+    """Set up the Git repository in /data."""
+    # Ensure /data exists
+    os.makedirs(REPO_DIR, exist_ok=True)
+
+    # Check if /data is already a Git repository
+    if not os.path.exists(os.path.join(REPO_DIR, ".git")):
+        print(f"Cloning repository into {REPO_DIR}...")
+        try:
+            subprocess.run(["git", "clone", REPO_URL, REPO_DIR], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to clone repository: {e}")
+            raise
+
+    # Configure Git user and remote
+    try:
+        subprocess.run(["git", "config", "user.name", "Docker Container"], cwd=REPO_DIR, check=True)
+        subprocess.run(["git", "config", "user.email", "docker@local"], cwd=REPO_DIR, check=True)
+        token = os.getenv("GITHUB_TOKEN")
+        if token:
+            subprocess.run(
+                ["git", "remote", "set-url", "origin", f"https://{token}@github.com/LostOnTheLine/anime-dub-calendar.git"],
+                cwd=REPO_DIR,
+                check=True
+            )
+        else:
+            print("Warning: GITHUB_TOKEN not set, Git operations may fail")
+        
+        # Ensure Grok branch
+        subprocess.run(["git", "fetch", "origin"], cwd=REPO_DIR, check=True)
+        subprocess.run(["git", "checkout", "Grok"], cwd=REPO_DIR, check=True)
+        print("Git setup completed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Git setup failed: {e}")
+        raise
 
 def git_pull_if_needed():
-    os.chdir(REPO_DIR)
-    subprocess.run(["git", "fetch", "origin", "Grok"], check=True)
-    local_commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    remote_commit = subprocess.run(["git", "rev-parse", "origin/Grok"], capture_output=True, text=True).stdout.strip()
-    
-    if local_commit != remote_commit:
-        print("New version detected, pulling changes")
-        subprocess.run(["git", "pull", "origin", "Grok"], check=True)
-    else:
-        print("No new version on GitHub")
+    """Pull updates from GitHub if there are new changes."""
+    try:
+        subprocess.run(["git", "fetch", "origin", "Grok"], cwd=REPO_DIR, check=True)
+        local_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_DIR, capture_output=True, text=True, check=True).stdout.strip()
+        remote_commit = subprocess.run(["git", "rev-parse", "origin/Grok"], cwd=REPO_DIR, capture_output=True, text=True, check=True).stdout.strip()
+        
+        if local_commit != remote_commit:
+            print("New version detected, pulling changes")
+            subprocess.run(["git", "pull", "origin", "Grok"], cwd=REPO_DIR, check=True)
+        else:
+            print("No new version on GitHub")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to pull updates: {e}")
 
 def git_push():
-    os.chdir(REPO_DIR)
-    subprocess.run(["git", "add", "."], check=True)
-    result = subprocess.run(["git", "commit", "-m", "Update metadata from container"], check=False, capture_output=True, text=True)
-    if result.returncode == 0:
-        subprocess.run(["git", "push", "origin", "Grok"], check=True)
-        print("Changes pushed to GitHub")
-    else:
-        print("No changes to commit")
+    """Push changes to GitHub."""
+    try:
+        subprocess.run(["git", "add", "."], cwd=REPO_DIR, check=True)
+        result = subprocess.run(["git", "commit", "-m", "Update metadata from container"], cwd=REPO_DIR, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            subprocess.run(["git", "push", "origin", "Grok"], cwd=REPO_DIR, check=True)
+            print("Changes pushed to GitHub")
+        else:
+            print("No changes to commit")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to push changes: {e}")
 
 def parse_show_page(url):
+    """Parse a show's MAL page for metadata."""
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
     data = {}
@@ -67,6 +97,7 @@ def parse_show_page(url):
     return data
 
 def update_metadata():
+    """Update metadata.yaml from forum data."""
     git_pull_if_needed()
     data = scrape_forum_post()
     if not data:
@@ -79,7 +110,7 @@ def update_metadata():
         return
 
     metadata = {}
-    manual_file = "/data/manual_overrides.yaml"
+    manual_file = os.path.join(REPO_DIR, "manual_overrides.yaml")
     manual = {}
     if os.path.exists(manual_file):
         with open(manual_file, "r") as f:
@@ -101,13 +132,14 @@ def update_metadata():
             if mal_id in manual:
                 metadata[mal_id].update(manual[mal_id])
 
-    with open("/data/metadata.yaml", "w") as f:
+    with open(os.path.join(REPO_DIR, "metadata.yaml"), "w") as f:
         yaml.safe_dump(metadata, f)
     save_cached_data(data)
     git_push()
     print("Metadata updated and pushed to GitHub")
 
 def run_scheduler():
+    """Run the scheduled metadata updates."""
     git_setup()  # Initial setup and pull on startup
     sync_interval = int(os.getenv("SYNC_INTERVAL_HOURS", "1"))  # Default to 1 hour
     schedule.every(sync_interval).hours.do(update_metadata)
