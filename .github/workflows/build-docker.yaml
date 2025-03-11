@@ -1,7 +1,17 @@
 name: Build and Push Docker Image
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version increment type: major (incompatible changes), minor (new features), patch (bug fixes)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
 
 jobs:
   build-and-push:
@@ -10,6 +20,7 @@ jobs:
       - uses: actions/checkout@v3
         with:
           ref: Grok
+          fetch-depth: 0  # Fetch all history for tag analysis
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -21,11 +32,90 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get current version
+        id: get_version
+        run: |
+          # Get latest tag or default to 0.0.2 (assuming 0.0.3 is the next after fixes)
+          LATEST_TAG=$(git tag --list 'v*' | sort -V | tail -n 1 || echo "v0.0.2")
+          CURRENT_VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          
+          # Increment based on SemVer rules
+          case "${{ github.event.inputs.version_type }}" in
+            "major")
+              NEW_MAJOR=$((MAJOR + 1))
+              NEW_MINOR=0
+              NEW_PATCH=0
+              ;;
+            "minor")
+              NEW_MAJOR=$MAJOR
+              NEW_MINOR=$((MINOR + 1))
+              NEW_PATCH=0
+              ;;
+            "patch")
+              NEW_MAJOR=$MAJOR
+              NEW_MINOR=$MINOR
+              NEW_PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
+          echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
+          CURRENT_TRACK="$NEW_MAJOR.$NEW_MINOR"
+          echo "CURRENT_TRACK=$CURRENT_TRACK" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
           push: true
-          tags: ghcr.io/lostontheline/anime-dub-calendar:latest
-          platforms: linux/amd64  # Synology NAS typically uses amd64
+          tags: |
+            ghcr.io/lostontheline/anime-dub-calendar:v${{ steps.get_version.outputs.NEW_VERSION }}
+            ghcr.io/lostontheline/anime-dub-calendar:latest
+          platforms: linux/amd64
+
+      - name: Tag the commit
+        run: |
+          git tag v${{ steps.get_version.outputs.NEW_VERSION }}
+          git push origin v${{ steps.get_version.outputs.NEW_VERSION }}
+
+      - name: Manage version retention
+        run: |
+          CURRENT_TRACK="${{ steps.get_version.outputs.CURRENT_TRACK }}"
+          NEW_VERSION="${{ steps.get_version.outputs.NEW_VERSION }}"
+          
+          # Get all tags via GitHub API
+          ALL_TAGS=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/LostOnTheLine/anime-dub-calendar/tags" | jq -r '.[].name' | sort -V)
+          
+          # Current track (e.g., 0.0.x)
+          CURRENT_TRACK_TAGS=$(echo "$ALL_TAGS" | grep "^v$CURRENT_TRACK\." || true)
+          CURRENT_COUNT=$(echo "$CURRENT_TRACK_TAGS" | wc -l)
+          
+          # Keep last 5 of current track
+          if [ "$CURRENT_COUNT" -gt 5 ]; then
+            TO_DELETE=$(echo "$CURRENT_TRACK_TAGS" | head -n $((CURRENT_COUNT - 5)))
+            for TAG in $TO_DELETE; do
+              VERSION=${TAG#v}
+              echo "Deleting old tag: $TAG and image ghcr.io/lostontheline/anime-dub-calendar:$VERSION"
+              curl -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/LostOnTheLine/anime-dub-calendar/git/refs/tags/$TAG"
+              docker image rm ghcr.io/lostontheline/anime-dub-calendar:$VERSION || true
+            done
+          fi
+          
+          # Keep latest of previous minor versions
+          PREVIOUS_MINORS=$(echo "$ALL_TAGS" | grep -v "^v$CURRENT_TRACK\." | grep -E "^v[0-9]+\.[0-9]+\." | sort -V | uniq -w4)
+          for MINOR in $PREVIOUS_MINORS; do
+            LATEST_PREVIOUS=$(echo "$ALL_TAGS" | grep "^$MINOR" | tail -n 1)
+            OLD_PREVIOUS=$(echo "$ALL_TAGS" | grep "^$MINOR" | grep -v "$LATEST_PREVIOUS")
+            for TAG in $OLD_PREVIOUS; do
+              VERSION=${TAG#v}
+              echo "Deleting old previous minor tag: $TAG and image ghcr.io/lostontheline/anime-dub-calendar:$VERSION"
+              curl -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/LostOnTheLine/anime-dub-calendar/git/refs/tags/$TAG"
+              docker image rm ghcr.io/lostontheline/anime-dub-calendar:$VERSION || true
+            done
+          done
