@@ -8,33 +8,44 @@ import os
 import subprocess
 
 REPO_URL = "https://github.com/LostOnTheLine/anime-dub-calendar.git"
-REPO_DIR = "/app/repo"
+REPO_DIR = "/data"
 
 def git_setup():
-    if not os.path.exists(REPO_DIR):
-        subprocess.run(["git", "clone", REPO_URL, REPO_DIR], check=True)
     os.chdir(REPO_DIR)
+    if not os.path.exists(".git"):
+        subprocess.run(["git", "clone", REPO_URL, "."], check=True)
     subprocess.run(["git", "config", "user.name", "Docker Container"], check=True)
     subprocess.run(["git", "config", "user.email", "docker@local"], check=True)
     token = os.getenv("GITHUB_TOKEN")
     if token:
         subprocess.run(["git", "remote", "set-url", "origin", f"https://{token}@github.com/LostOnTheLine/anime-dub-calendar.git"], check=True)
+    else:
+        print("Warning: GITHUB_TOKEN not set, Git operations may fail")
+    # Ensure Grok branch
+    subprocess.run(["git", "fetch", "origin"], check=True)
+    subprocess.run(["git", "checkout", "Grok"], check=True)
 
-def git_pull():
+def git_pull_if_needed():
     os.chdir(REPO_DIR)
-    subprocess.run(["git", "pull", "origin", "Grok"], check=True)
-    # Copy updated files to /data
-    subprocess.run(["cp", "data/manual_overrides.yaml", "/data/"], check=False)
-    subprocess.run(["cp", "data/parsed_data.yaml", "/data/"], check=False)
+    subprocess.run(["git", "fetch", "origin", "Grok"], check=True)
+    local_commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    remote_commit = subprocess.run(["git", "rev-parse", "origin/Grok"], capture_output=True, text=True).stdout.strip()
+    
+    if local_commit != remote_commit:
+        print("New version detected, pulling changes")
+        subprocess.run(["git", "pull", "origin", "Grok"], check=True)
+    else:
+        print("No new version on GitHub")
 
 def git_push():
     os.chdir(REPO_DIR)
-    subprocess.run(["cp", "/data/metadata.yaml", "data/"], check=True)
-    subprocess.run(["cp", "/data/parsed_data.yaml", "data/"], check=True)
-    subprocess.run(["cp", "/data/manual_overrides.yaml", "data/"], check=True)
-    subprocess.run(["git", "add", "data/"], check=True)
-    subprocess.run(["git", "commit", "-m", "Update metadata from container"], check=False)  # check=False to skip if no changes
-    subprocess.run(["git", "push", "origin", "Grok"], check=True)
+    subprocess.run(["git", "add", "."], check=True)
+    result = subprocess.run(["git", "commit", "-m", "Update metadata from container"], check=False, capture_output=True, text=True)
+    if result.returncode == 0:
+        subprocess.run(["git", "push", "origin", "Grok"], check=True)
+        print("Changes pushed to GitHub")
+    else:
+        print("No changes to commit")
 
 def parse_show_page(url):
     response = requests.get(url)
@@ -56,7 +67,7 @@ def parse_show_page(url):
     return data
 
 def update_metadata():
-    git_pull()  # Pull latest before updating
+    git_pull_if_needed()
     data = scrape_forum_post()
     if not data:
         print("Failed to scrape forum post")
@@ -93,12 +104,13 @@ def update_metadata():
     with open("/data/metadata.yaml", "w") as f:
         yaml.safe_dump(metadata, f)
     save_cached_data(data)
-    git_push()  # Push updates after processing
+    git_push()
     print("Metadata updated and pushed to GitHub")
 
 def run_scheduler():
-    git_setup()  # Initial setup
-    schedule.every(1).hours.do(update_metadata)
+    git_setup()  # Initial setup and pull on startup
+    sync_interval = int(os.getenv("SYNC_INTERVAL_HOURS", "1"))  # Default to 1 hour
+    schedule.every(sync_interval).hours.do(update_metadata)
     while True:
         schedule.run_pending()
         time.sleep(60)

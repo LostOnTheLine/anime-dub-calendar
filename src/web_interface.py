@@ -1,7 +1,26 @@
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, send_file
 import yaml
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
+
+def generate_favicon():
+    img = Image.new('RGB', (32, 32), color='white')
+    d = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("arial.ttf", 16)
+    except:
+        font = ImageFont.load_default()
+    d.text((4, 8), "Dub", font=font, fill='black')
+    buffer = BytesIO()
+    img.save(buffer, format="ICO")
+    buffer.seek(0)
+    return buffer
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_file(generate_favicon(), mimetype='image/x-icon')
 
 @app.route('/')
 def home():
@@ -12,6 +31,10 @@ def home():
         metadata = {}
     
     html = """
+    <head>
+        <link rel="icon" type="image/x-icon" href="/favicon.ico">
+        <title>Anime Dub Calendar</title>
+    </head>
     <h1>Anime Dub Metadata</h1>
     <table border="1">
         <tr>
