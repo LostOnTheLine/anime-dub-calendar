@@ -4,8 +4,9 @@ services:
     container_name: metadata_scraper
     environment:
       - dub_streaming_50607=DisneyNow
+      - GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Replace with your PAT
     volumes:
       - /volume1/docker/metadata_scraper/data:/data
     ports:
-      - "5000:5000"  # Expose Flask app
+      - "5000:5000"
     restart: unless-stopped

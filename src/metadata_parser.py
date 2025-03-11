@@ -4,6 +4,37 @@ import time
 from scraper import scrape_forum_post, load_cached_data, save_cached_data, needs_update
 from web_interface import run_web_app
 import threading
+import os
+import subprocess
+
+REPO_URL = "https://github.com/LostOnTheLine/anime-dub-calendar.git"
+REPO_DIR = "/app/repo"
+
+def git_setup():
+    if not os.path.exists(REPO_DIR):
+        subprocess.run(["git", "clone", REPO_URL, REPO_DIR], check=True)
+    os.chdir(REPO_DIR)
+    subprocess.run(["git", "config", "user.name", "Docker Container"], check=True)
+    subprocess.run(["git", "config", "user.email", "docker@local"], check=True)
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        subprocess.run(["git", "remote", "set-url", "origin", f"https://{token}@github.com/LostOnTheLine/anime-dub-calendar.git"], check=True)
+
+def git_pull():
+    os.chdir(REPO_DIR)
+    subprocess.run(["git", "pull", "origin", "Grok"], check=True)
+    # Copy updated files to /data
+    subprocess.run(["cp", "data/manual_overrides.yaml", "/data/"], check=False)
+    subprocess.run(["cp", "data/parsed_data.yaml", "/data/"], check=False)
+
+def git_push():
+    os.chdir(REPO_DIR)
+    subprocess.run(["cp", "/data/metadata.yaml", "data/"], check=True)
+    subprocess.run(["cp", "/data/parsed_data.yaml", "data/"], check=True)
+    subprocess.run(["cp", "/data/manual_overrides.yaml", "data/"], check=True)
+    subprocess.run(["git", "add", "data/"], check=True)
+    subprocess.run(["git", "commit", "-m", "Update metadata from container"], check=False)  # check=False to skip if no changes
+    subprocess.run(["git", "push", "origin", "Grok"], check=True)
 
 def parse_show_page(url):
     response = requests.get(url)
@@ -25,6 +56,7 @@ def parse_show_page(url):
     return data
 
 def update_metadata():
+    git_pull()  # Pull latest before updating
     data = scrape_forum_post()
     if not data:
         print("Failed to scrape forum post")
@@ -36,7 +68,13 @@ def update_metadata():
         return
 
     metadata = {}
-    manual = yaml.safe_load(open("/data/manual_overrides.yaml", "r")) or {}
+    manual_file = "/data/manual_overrides.yaml"
+    manual = {}
+    if os.path.exists(manual_file):
+        with open(manual_file, "r") as f:
+            manual = yaml.safe_load(f) or {}
+    else:
+        print("Manual overrides file not found, proceeding without it")
 
     for day, shows in data["sections"]["Currently Streaming SimulDubbed Anime"].items():
         for show in shows:
@@ -55,17 +93,17 @@ def update_metadata():
     with open("/data/metadata.yaml", "w") as f:
         yaml.safe_dump(metadata, f)
     save_cached_data(data)
-    print("Metadata updated")
+    git_push()  # Push updates after processing
+    print("Metadata updated and pushed to GitHub")
 
 def run_scheduler():
-    schedule.every().day.at("08:00").do(update_metadata)  # Runs daily at 8:00 UTC
+    git_setup()  # Initial setup
+    schedule.every(1).hours.do(update_metadata)
     while True:
         schedule.run_pending()
         time.sleep(60)
 
 if __name__ == "__main__":
-    # Run scheduler in a separate thread
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
-    # Run web app in the main thread
     run_web_app()
