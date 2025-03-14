@@ -7,4 +7,4 @@ RUN pip install -r requirements.txt
 COPY src/ .
 CMD ["python", "metadata_parser.py"]
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
-  CMD curl -f http://localhost:5000/ && [ -d /data/.git ] && [ -f /data/metadata.yaml ] || exit 1
+  CMD curl -f http://localhost:5000/ && [ -d /app/repo/.git ] && [ -f /app/repo/metadata.yaml ] || exit 1

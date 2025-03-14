@@ -2,7 +2,7 @@ from flask import Flask, request, render_template_string, send_file, redirect, u
 import yaml
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
-from metadata_parser import parse_show_page, save_parsed_entry, remove_parsed_entry
+from utils import parse_show_page, save_parsed_entry, remove_parsed_entry
 
 app = Flask(__name__)
 REPO_DIR = "/app/repo"
@@ -26,14 +26,12 @@ def favicon():
 
 @app.route('/', methods=["GET", "POST"])
 def home():
-    # Load metadata
     try:
         with open(os.path.join(REPO_DIR, "metadata.yaml"), "r") as f:
             metadata = yaml.safe_load(f) or {}
     except FileNotFoundError:
         metadata = {}
 
-    # Load parsed data
     parsed_file = os.path.join(REPO_DIR, "parsed_data.yaml")
     parsed_entries = {}
     if os.path.exists(parsed_file):
