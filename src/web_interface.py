@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 from utils import parse_show_page, save_parsed_entry, remove_parsed_entry
 import os
 import json
-import logging  # Added for debugging
+import logging
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -75,7 +75,7 @@ def home():
                 {% endfor %}
                 <form method="POST" action="{{ url_for('save_manual') }}">
                     <input type="hidden" name="mal_id" value="{{ fetched_metadata['MAL_ID'] }}">
-                    <input type="hidden" name="metadata" value="{{ fetched_metadata | tojson }}">
+                    <input type="hidden" name="metadata" value="{{ fetched_metadata | tojson | safe }}">
                     <label><input type="checkbox" name="save_parser" checked> Save for parser?</label><br><br>
                     <input type="submit" value="Save Metadata">
                 </form>
@@ -164,14 +164,21 @@ def manual_add():
 
 @app.route("/save_manual", methods=["POST"])
 def save_manual():
+    logger.debug(f"Full form data: {request.form}")
     mal_id = request.form.get("mal_id")
     metadata_str = request.form.get("metadata")
-    logger.debug(f"Raw metadata string: {metadata_str}")  # Log the raw input
+    logger.debug(f"Raw metadata string: {repr(metadata_str)}")  # Use repr() for exact string
+    if not metadata_str:
+        logger.error("Metadata string is empty or None")
+        app.config['error'] = "No metadata provided"
+        app.config['fetched_metadata'] = None
+        return redirect(url_for('home'))
+
     try:
         metadata = json.loads(metadata_str)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse metadata: {e}")
-        app.config['error'] = "Invalid metadata format"
+        app.config['error'] = f"Invalid metadata format: {str(e)}"
         app.config['fetched_metadata'] = None
         return redirect(url_for('home'))
 
