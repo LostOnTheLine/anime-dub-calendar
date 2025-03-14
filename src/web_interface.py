@@ -4,7 +4,12 @@ from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from utils import parse_show_page, save_parsed_entry, remove_parsed_entry
 import os
-import json  # Added this import
+import json
+import logging  # Added for debugging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 REPO_DIR = "/app/repo"
@@ -160,9 +165,17 @@ def manual_add():
 @app.route("/save_manual", methods=["POST"])
 def save_manual():
     mal_id = request.form.get("mal_id")
-    metadata = json.loads(request.form.get("metadata"))  # Changed from yaml.safe_load to json.loads
-    save_parser = request.form.get("save_parser") == "on"
+    metadata_str = request.form.get("metadata")
+    logger.debug(f"Raw metadata string: {metadata_str}")  # Log the raw input
+    try:
+        metadata = json.loads(metadata_str)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse metadata: {e}")
+        app.config['error'] = "Invalid metadata format"
+        app.config['fetched_metadata'] = None
+        return redirect(url_for('home'))
 
+    save_parser = request.form.get("save_parser") == "on"
     if save_parser:
         save_parsed_entry(mal_id, metadata)
     app.config['fetched_metadata'] = None
