@@ -58,13 +58,28 @@ def home():
         </style>
         <script>
             function saveMetadata(malId, metadata) {
+                console.log('Button clicked');
+                console.log('MAL ID:', malId);
+                console.log('Metadata:', metadata);
+                console.log('Save parser:', document.getElementById('save_parser').checked);
                 fetch('/save_manual', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mal_id: malId, metadata: metadata, save_parser: document.getElementById('save_parser').checked })
                 }).then(response => {
-                    if (response.ok) window.location = '/';
-                    else alert('Failed to save metadata');
+                    console.log('Response:', response.status, response.ok);
+                    if (response.ok) {
+                        console.log('Redirecting to /');
+                        window.location = '/';
+                    } else {
+                        response.text().then(text => {
+                            console.log('Error response:', text);
+                            alert('Failed to save metadata: ' + text);
+                        });
+                    }
+                }).catch(error => {
+                    console.error('Fetch error:', error);
+                    alert('Network error: ' + error);
                 });
             }
         </script>

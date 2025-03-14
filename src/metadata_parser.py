@@ -8,27 +8,43 @@ import os
 import subprocess
 from datetime import datetime, timedelta
 from utils import parse_show_page, save_parsed_entry, remove_parsed_entry, git_push
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 REPO_URL = "https://github.com/LostOnTheLine/anime-dub-calendar.git"
 REPO_DIR = "/app/repo"
 
 def git_setup():
     os.makedirs(REPO_DIR, exist_ok=True)
-    if not os.path.exists(os.path.join(REPO_DIR, ".git")):
-        print(f"Cloning repository into {REPO_DIR}...")
+    repo_path = os.path.join(REPO_DIR, ".git")
+    if not os.path.exists(repo_path):
+        logger.info(f"No .git directory found at {REPO_DIR}, cloning repository...")
         try:
             subprocess.run(["git", "clone", REPO_URL, REPO_DIR], check=True)
         except subprocess.CalledProcessError as e:
-            print(f"Failed to clone repository: {e}")
-            raise
+            logger.error(f"Failed to clone repository: {e}")
+            return False
+    else:
+        logger.info(f"Found existing .git directory at {REPO_DIR}, verifying status...")
+        try:
+            # Check if it's a valid Git repo
+            subprocess.run(["git", "status"], cwd=REPO_DIR, check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Invalid Git repository at {REPO_DIR}: {e}")
+            return False
+
     try:
-        # Check if Git config is already set to avoid errors
+        # Configure Git if not already set
         result = subprocess.run(["git", "config", "user.name"], cwd=REPO_DIR, capture_output=True, text=True)
         if result.returncode != 0 or not result.stdout.strip():
             subprocess.run(["git", "config", "user.name", "Docker Container"], cwd=REPO_DIR, check=True)
+            logger.debug("Set Git user.name to 'Docker Container'")
         result = subprocess.run(["git", "config", "user.email"], cwd=REPO_DIR, capture_output=True, text=True)
         if result.returncode != 0 or not result.stdout.strip():
             subprocess.run(["git", "config", "user.email", "docker@local"], cwd=REPO_DIR, check=True)
+            logger.debug("Set Git user.email to 'docker@local'")
         token = os.getenv("GITHUB_TOKEN")
         if token:
             subprocess.run(
@@ -36,13 +52,16 @@ def git_setup():
                 cwd=REPO_DIR,
                 check=True
             )
+            logger.debug("Updated Git remote URL with GITHUB_TOKEN")
         else:
-            print("Warning: GITHUB_TOKEN not set, Git operations may fail")
+            logger.warning("GITHUB_TOKEN not set, Git operations may fail for authenticated actions")
         subprocess.run(["git", "fetch", "origin"], cwd=REPO_DIR, check=True)
         subprocess.run(["git", "checkout", "Grok"], cwd=REPO_DIR, check=True)
-        print("Git setup completed successfully.")
+        logger.info("Git setup completed successfully")
+        return True
     except subprocess.CalledProcessError as e:
-        print(f"Git setup failed: {e}")
+        logger.error(f"Git setup failed: {e}")
+        return False
 
 def git_pull_if_needed():
     try:
@@ -50,23 +69,23 @@ def git_pull_if_needed():
         local_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_DIR, capture_output=True, text=True, check=True).stdout.strip()
         remote_commit = subprocess.run(["git", "rev-parse", "origin/Grok"], cwd=REPO_DIR, capture_output=True, text=True, check=True).stdout.strip()
         if local_commit != remote_commit:
-            print("New version detected, pulling changes")
+            logger.info("New version detected, pulling changes")
             subprocess.run(["git", "pull", "origin", "Grok"], cwd=REPO_DIR, check=True)
         else:
-            print("No new version on GitHub")
+            logger.info("No new version on GitHub")
     except subprocess.CalledProcessError as e:
-        print(f"Failed to pull updates: {e}")
+        logger.error(f"Failed to pull updates: {e}")
 
 def update_metadata():
     git_pull_if_needed()
     data = scrape_forum_post()
     if not data:
-        print("Failed to scrape forum post")
+        logger.error("Failed to scrape forum post")
         return
 
     cached_data = load_cached_data()
     if not needs_update(cached_data, data):
-        print("No update needed")
+        logger.info("No update needed")
         return
 
     metadata = {}
@@ -90,7 +109,7 @@ def update_metadata():
         if now > added_date + timedelta(days=days):
             del parsed[mal_id]
             updated = True
-            print(f"Auto-removed MAL_ID {mal_id} after {days} days.")
+            logger.info(f"Auto-removed MAL_ID {mal_id} after {days} days.")
 
     if updated:
         with open(parsed_file, "w") as f:
@@ -117,15 +136,17 @@ def update_metadata():
         yaml.safe_dump(metadata, f)
     save_cached_data(data)
     git_push()
-    print("Metadata updated and pushed to GitHub")
+    logger.info("Metadata updated and pushed to GitHub")
 
 def run_scheduler():
-    git_setup()
-    sync_interval = int(os.getenv("SYNC_INTERVAL_HOURS", "1"))
-    schedule.every(sync_interval).hours.do(update_metadata)
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    if git_setup():
+        sync_interval = int(os.getenv("SYNC_INTERVAL_HOURS", "1"))
+        schedule.every(sync_interval).hours.do(update_metadata)
+        while True:
+            schedule.run_pending()
+            time.sleep(60)
+    else:
+        logger.error("Scheduler not started due to Git setup failure")
 
 if __name__ == "__main__":
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
