@@ -182,4 +182,7 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(60)
 
-if __name_
+if __name__ == "__main__":
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    run_web_app()
