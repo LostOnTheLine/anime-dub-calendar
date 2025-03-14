@@ -3,7 +3,8 @@ import yaml
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from utils import parse_show_page, save_parsed_entry, remove_parsed_entry
-import os  # Added this import
+import os
+import json  # Added this import
 
 app = Flask(__name__)
 REPO_DIR = "/app/repo"
@@ -159,7 +160,7 @@ def manual_add():
 @app.route("/save_manual", methods=["POST"])
 def save_manual():
     mal_id = request.form.get("mal_id")
-    metadata = yaml.safe_load(request.form.get("metadata"))
+    metadata = json.loads(request.form.get("metadata"))  # Changed from yaml.safe_load to json.loads
     save_parser = request.form.get("save_parser") == "on"
 
     if save_parser:
