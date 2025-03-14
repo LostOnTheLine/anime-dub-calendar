@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, send_file, redirect, url_for
+from flask import Flask, request, render_template_string, send_file, redirect, url_for, jsonify
 import yaml
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
@@ -7,7 +7,6 @@ import os
 import json
 import logging
 
-# Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -57,6 +56,18 @@ def home():
             .entry { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
             .error { color: red; }
         </style>
+        <script>
+            function saveMetadata(malId, metadata) {
+                fetch('/save_manual', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mal_id: malId, metadata: metadata, save_parser: document.getElementById('save_parser').checked })
+                }).then(response => {
+                    if (response.ok) window.location = '/';
+                    else alert('Failed to save metadata');
+                });
+            }
+        </script>
     </head>
     <body>
         <h1>Anime Dub Metadata</h1>
@@ -73,12 +84,12 @@ def home():
                 {% for key, value in fetched_metadata.items() %}
                     <p><strong>{{ key }}:</strong> {{ value }}</p>
                 {% endfor %}
-                <form method="POST" action="{{ url_for('save_manual') }}">
-                    <input type="hidden" name="mal_id" value="{{ fetched_metadata['MAL_ID'] }}">
-                    <input type="hidden" name="metadata" value="{{ fetched_metadata | tojson | safe }}">
-                    <label><input type="checkbox" name="save_parser" checked> Save for parser?</label><br><br>
-                    <input type="submit" value="Save Metadata">
-                </form>
+                <div>
+                    <input type="hidden" id="mal_id" value="{{ fetched_metadata['MAL_ID'] }}">
+                    <input type="hidden" id="metadata" value="{{ fetched_metadata | tojson | safe }}">
+                    <label><input type="checkbox" id="save_parser" checked> Save for parser?</label><br><br>
+                    <button onclick="saveMetadata(document.getElementById('mal_id').value, JSON.parse(document.getElementById('metadata').value))">Save Metadata</button>
+                </div>
             </div>
         {% endif %}
         {% if error %}
@@ -164,30 +175,21 @@ def manual_add():
 
 @app.route("/save_manual", methods=["POST"])
 def save_manual():
-    logger.debug(f"Full form data: {request.form}")
-    mal_id = request.form.get("mal_id")
-    metadata_str = request.form.get("metadata")
-    logger.debug(f"Raw metadata string: {repr(metadata_str)}")  # Use repr() for exact string
-    if not metadata_str:
-        logger.error("Metadata string is empty or None")
-        app.config['error'] = "No metadata provided"
-        app.config['fetched_metadata'] = None
-        return redirect(url_for('home'))
+    data = request.get_json()
+    logger.debug(f"Received JSON data: {data}")
+    if not data or 'mal_id' not in data or 'metadata' not in data:
+        logger.error("Invalid JSON data received")
+        return jsonify({"error": "Invalid data"}), 400
 
-    try:
-        metadata = json.loads(metadata_str)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse metadata: {e}")
-        app.config['error'] = f"Invalid metadata format: {str(e)}"
-        app.config['fetched_metadata'] = None
-        return redirect(url_for('home'))
+    mal_id = data['mal_id']
+    metadata = data['metadata']
+    save_parser = data.get('save_parser', False)
 
-    save_parser = request.form.get("save_parser") == "on"
     if save_parser:
         save_parsed_entry(mal_id, metadata)
     app.config['fetched_metadata'] = None
     app.config['error'] = None
-    return redirect(url_for('home'))
+    return jsonify({"success": True})
 
 @app.route("/remove_manual", methods=["POST"])
 def remove_manual():

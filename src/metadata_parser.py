@@ -22,8 +22,13 @@ def git_setup():
             print(f"Failed to clone repository: {e}")
             raise
     try:
-        subprocess.run(["git", "config", "user.name", "Docker Container"], cwd=REPO_DIR, check=True)
-        subprocess.run(["git", "config", "user.email", "docker@local"], cwd=REPO_DIR, check=True)
+        # Check if Git config is already set to avoid errors
+        result = subprocess.run(["git", "config", "user.name"], cwd=REPO_DIR, capture_output=True, text=True)
+        if result.returncode != 0 or not result.stdout.strip():
+            subprocess.run(["git", "config", "user.name", "Docker Container"], cwd=REPO_DIR, check=True)
+        result = subprocess.run(["git", "config", "user.email"], cwd=REPO_DIR, capture_output=True, text=True)
+        if result.returncode != 0 or not result.stdout.strip():
+            subprocess.run(["git", "config", "user.email", "docker@local"], cwd=REPO_DIR, check=True)
         token = os.getenv("GITHUB_TOKEN")
         if token:
             subprocess.run(
@@ -38,7 +43,6 @@ def git_setup():
         print("Git setup completed successfully.")
     except subprocess.CalledProcessError as e:
         print(f"Git setup failed: {e}")
-        raise
 
 def git_pull_if_needed():
     try:
@@ -78,7 +82,6 @@ def update_metadata():
         with open(parsed_file, "r") as f:
             parsed = yaml.safe_load(f) or {}
     
-    # Check for auto-removal
     now = datetime.now()
     updated = False
     for mal_id, entry in list(parsed.items()):
