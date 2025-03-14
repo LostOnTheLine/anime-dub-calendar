@@ -8,16 +8,13 @@ import os
 import subprocess
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 
 REPO_URL = "https://github.com/LostOnTheLine/anime-dub-calendar.git"
 REPO_DIR = "/app/repo"
 
 def git_setup():
-    """Set up the Git repository in /app/repo."""
-    # Ensure /app/repo exists
     os.makedirs(REPO_DIR, exist_ok=True)
-
-    # Check if /app/repo is already a Git repository
     if not os.path.exists(os.path.join(REPO_DIR, ".git")):
         print(f"Cloning repository into {REPO_DIR}...")
         try:
@@ -25,8 +22,6 @@ def git_setup():
         except subprocess.CalledProcessError as e:
             print(f"Failed to clone repository: {e}")
             raise
-
-    # Configure Git user and remote
     try:
         subprocess.run(["git", "config", "user.name", "Docker Container"], cwd=REPO_DIR, check=True)
         subprocess.run(["git", "config", "user.email", "docker@local"], cwd=REPO_DIR, check=True)
@@ -39,8 +34,6 @@ def git_setup():
             )
         else:
             print("Warning: GITHUB_TOKEN not set, Git operations may fail")
-        
-        # Ensure Grok branch
         subprocess.run(["git", "fetch", "origin"], cwd=REPO_DIR, check=True)
         subprocess.run(["git", "checkout", "Grok"], cwd=REPO_DIR, check=True)
         print("Git setup completed successfully.")
@@ -49,12 +42,10 @@ def git_setup():
         raise
 
 def git_pull_if_needed():
-    """Pull updates from GitHub if there are new changes."""
     try:
         subprocess.run(["git", "fetch", "origin", "Grok"], cwd=REPO_DIR, check=True)
         local_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_DIR, capture_output=True, text=True, check=True).stdout.strip()
         remote_commit = subprocess.run(["git", "rev-parse", "origin/Grok"], cwd=REPO_DIR, capture_output=True, text=True, check=True).stdout.strip()
-        
         if local_commit != remote_commit:
             print("New version detected, pulling changes")
             subprocess.run(["git", "pull", "origin", "Grok"], cwd=REPO_DIR, check=True)
@@ -64,7 +55,6 @@ def git_pull_if_needed():
         print(f"Failed to pull updates: {e}")
 
 def git_push():
-    """Push changes to GitHub."""
     try:
         subprocess.run(["git", "add", "."], cwd=REPO_DIR, check=True)
         result = subprocess.run(["git", "commit", "-m", "Update metadata from container"], cwd=REPO_DIR, capture_output=True, text=True, check=False)
@@ -77,7 +67,6 @@ def git_push():
         print(f"Failed to push changes: {e}")
 
 def parse_show_page(url):
-    """Parse a show's MAL page for metadata."""
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
     data = {}
@@ -96,8 +85,33 @@ def parse_show_page(url):
                 data[key] = value
     return data
 
+def save_parsed_entry(mal_id, metadata):
+    parsed_file = os.path.join(REPO_DIR, "parsed_data.yaml")
+    parsed = {}
+    if os.path.exists(parsed_file):
+        with open(parsed_file, "r") as f:
+            parsed = yaml.safe_load(f) or {}
+    metadata["added_date"] = datetime.now().isoformat()
+    metadata["auto_remove_after_days"] = metadata.get("auto_remove_after_days", 180)  # Default 6 months
+    parsed[mal_id] = metadata
+    with open(parsed_file, "w") as f:
+        yaml.safe_dump(parsed, f)
+    git_push()
+    print(f"Parsed entry for MAL_ID {mal_id} saved and pushed.")
+
+def remove_parsed_entry(mal_id):
+    parsed_file = os.path.join(REPO_DIR, "parsed_data.yaml")
+    if os.path.exists(parsed_file):
+        with open(parsed_file, "r") as f:
+            parsed = yaml.safe_load(f) or {}
+        if mal_id in parsed:
+            del parsed[mal_id]
+            with open(parsed_file, "w") as f:
+                yaml.safe_dump(parsed, f)
+            git_push()
+            print(f"Parsed entry for MAL_ID {mal_id} removed and pushed.")
+
 def update_metadata():
-    """Update metadata.yaml from forum data."""
     git_pull_if_needed()
     data = scrape_forum_post()
     if not data:
@@ -115,8 +129,28 @@ def update_metadata():
     if os.path.exists(manual_file):
         with open(manual_file, "r") as f:
             manual = yaml.safe_load(f) or {}
-    else:
-        print("Manual overrides file not found, proceeding without it")
+
+    parsed_file = os.path.join(REPO_DIR, "parsed_data.yaml")
+    parsed = {}
+    if os.path.exists(parsed_file):
+        with open(parsed_file, "r") as f:
+            parsed = yaml.safe_load(f) or {}
+    
+    # Check for auto-removal
+    now = datetime.now()
+    updated = False
+    for mal_id, entry in list(parsed.items()):
+        added_date = datetime.fromisoformat(entry.get("added_date", now.isoformat()))
+        days = entry.get("auto_remove_after_days", 180)
+        if now > added_date + timedelta(days=days):
+            del parsed[mal_id]
+            updated = True
+            print(f"Auto-removed MAL_ID {mal_id} after {days} days.")
+
+    if updated:
+        with open(parsed_file, "w") as f:
+            yaml.safe_dump(parsed, f)
+        git_push()
 
     for day, shows in data["sections"]["Currently Streaming SimulDubbed Anime"].items():
         for show in shows:
@@ -131,6 +165,8 @@ def update_metadata():
             })
             if mal_id in manual:
                 metadata[mal_id].update(manual[mal_id])
+            if mal_id in parsed:
+                metadata[mal_id].update(parsed[mal_id])
 
     with open(os.path.join(REPO_DIR, "metadata.yaml"), "w") as f:
         yaml.safe_dump(metadata, f)
@@ -139,15 +175,11 @@ def update_metadata():
     print("Metadata updated and pushed to GitHub")
 
 def run_scheduler():
-    """Run the scheduled metadata updates."""
-    git_setup()  # Initial setup and pull on startup
-    sync_interval = int(os.getenv("SYNC_INTERVAL_HOURS", "1"))  # Default to 1 hour
+    git_setup()
+    sync_interval = int(os.getenv("SYNC_INTERVAL_HOURS", "1"))
     schedule.every(sync_interval).hours.do(update_metadata)
     while True:
         schedule.run_pending()
         time.sleep(60)
 
-if __name__ == "__main__":
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-    run_web_app()
+if __name_
