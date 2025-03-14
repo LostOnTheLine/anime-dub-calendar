@@ -3,6 +3,7 @@ import yaml
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from utils import parse_show_page, save_parsed_entry, remove_parsed_entry
+import os  # Added this import
 
 app = Flask(__name__)
 REPO_DIR = "/app/repo"
