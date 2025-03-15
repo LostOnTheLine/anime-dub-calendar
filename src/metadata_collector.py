@@ -88,12 +88,11 @@ def scrape_show_page(url, mal_id, forum_data):
         data = forum_data.copy()
         now = datetime.utcnow().isoformat()
         data["LastChecked"] = now
-        data["DateAdded"] = data.get("DateAdded", now)
-        data["Hash"] = compute_hash(mal_id)
 
         for span in info.find_all("span", {"class": "dark_text"}):
             key = span.text.strip(":")
-            value = span.next_sibling.strip() if span.next_sibling else ""
+            next_elem = span.next_sibling
+            value = next_elem.strip() if next_elem else ""
             if key == "Studios":
                 data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
             elif key == "Genres":
@@ -104,9 +103,9 @@ def scrape_show_page(url, mal_id, forum_data):
             elif key == "Broadcast":
                 data[key] = value.split(" (")[0]  # Remove timezone
             elif key == "Source":
-                data[key] = value
-            elif key == "Themes":
-                data["Theme"] = "|".join(a.text for a in span.find_next_siblings("a"))
+                data[key] = next_elem.find("a").text.strip() if next_elem.find("a") else value
+            elif key == "Theme":  # Singular "Theme"
+                data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
             elif key == "Duration":
                 data[key] = value
             elif key == "Rating":
@@ -119,17 +118,28 @@ def scrape_show_page(url, mal_id, forum_data):
         if broadcasts:
             data["Streaming"] = "|".join(b.find("div", {"class": "caption"}).text for b in broadcasts if b.find("div", {"class": "caption"}))
 
-        # LastModified (approximate from MAL's last updated if available)
+        # LastModified from MAL's "Last Updated"
         last_updated = soup.find("div", {"class": "updatesBar"})
         if last_updated and "Last Updated" in last_updated.text:
             data["LastModified"] = last_updated.text.split("Last Updated ")[1].strip()
         else:
             data["LastModified"] = data.get("LastModified", now)
 
+        # Ensure Demographic is always present
+        data.setdefault("Demographic", "")
+
+        data["Hash"] = compute_hash(mal_id)
         return data
     except Exception as e:
         logger.error(f"Show page scraping failed for {url}: {e}")
         return forum_data
+
+def load_existing_metadata():
+    """Load existing metadata to preserve DateAdded."""
+    if os.path.exists(OUTPUT_FILE):
+        with open(OUTPUT_FILE, "r") as f:
+            return json.load(f) or {}
+    return {}
 
 def load_manual_overrides():
     """Load manual overrides from file."""
@@ -151,10 +161,19 @@ def collect_metadata():
     if not forum_data:
         return {}
 
+    existing_metadata = load_existing_metadata()
     manual_overrides = load_manual_overrides()
     metadata = {}
     for mal_id, base_data in forum_data.items():
         show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
+        # Preserve DateAdded from existing data
+        show_data["DateAdded"] = existing_metadata.get(mal_id, {}).get("DateAdded", show_data["LastChecked"])
+        # Update LastModified only if data differs
+        old_data = existing_metadata.get(mal_id, {})
+        if old_data and old_data != show_data:
+            show_data["LastModified"] = show_data["LastChecked"]
+        elif "LastModified" not in show_data:
+            show_data["LastModified"] = show_data["LastChecked"]
         if mal_id in manual_overrides:
             show_data.update(manual_overrides[mal_id])
         metadata[mal_id] = show_data
@@ -184,9 +203,16 @@ if __name__ == "__main__":
         }
         with open(MANUAL_FILE, "w") as f:
             json.dump(test_manual, f)
+        existing_metadata = load_existing_metadata()
         metadata = {}
         for mal_id, base_data in test_forum_data.items():
             show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
+            show_data["DateAdded"] = existing_metadata.get(mal_id, {}).get("DateAdded", show_data["LastChecked"])
+            old_data = existing_metadata.get(mal_id, {})
+            if old_data and old_data != show_data:
+                show_data["LastModified"] = show_data["LastChecked"]
+            elif "LastModified" not in show_data:
+                show_data["LastModified"] = show_data["LastChecked"]
             if mal_id in test_manual:
                 show_data.update(test_manual[mal_id])
             metadata[mal_id] = show_data
