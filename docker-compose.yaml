@@ -6,6 +6,7 @@ services:
       - dub_streaming_50607=DisneyNow
       - GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Replace with your PAT
       - SYNC_INTERVAL_HOURS=1  # Default to 1 hour
+      - TEST_MODE=true
     volumes:
       - /volume1/docker/metadata_scraper/data:/data
     ports:

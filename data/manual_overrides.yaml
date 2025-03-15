@@ -1,3 +1,7 @@
-"50607":
-  streaming: "DisneyNow"
-  emoji: "🐭"
+{
+  "57891": {
+    "Emoji": "🐭",
+    "DubStream": "DisneyNow",
+    "EventColor": "Tangerine"
+  }
+}
