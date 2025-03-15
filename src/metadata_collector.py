@@ -87,7 +87,7 @@ def scrape_show_page(url, mal_id, forum_data):
 
         data = forum_data.copy()
         now = datetime.utcnow().isoformat()
-        data["LastChecked"] = now  # Set early to ensure it’s always present
+        data["LastChecked"] = now  # Current run time
 
         for span in info.find_all("span", {"class": "dark_text"}):
             key = span.text.strip(":")
@@ -110,7 +110,7 @@ def scrape_show_page(url, mal_id, forum_data):
                     data[key] = next_elem.find("a").text.strip()
                 else:
                     data[key] = ""
-            elif key == "Theme":  # Singular "Theme"
+            elif key == "Theme":
                 data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
             elif key == "Duration":
                 data[key] = value
@@ -124,12 +124,12 @@ def scrape_show_page(url, mal_id, forum_data):
         if broadcasts:
             data["Streaming"] = "|".join(b.find("div", {"class": "caption"}).text for b in broadcasts if b.find("div", {"class": "caption"}))
 
-        # LastModified from MAL's "Last Updated"
+        # LastModified from MAL's "Last Updated" if available
         last_updated = soup.find("div", {"class": "updatesBar"})
         if last_updated and "Last Updated" in last_updated.text:
             data["LastModified"] = last_updated.text.split("Last Updated ")[1].strip()
         else:
-            data["LastModified"] = data.get("LastModified", now)
+            data["LastModified"] = None  # Will be set later based on changes
 
         # Ensure Demographic is always present
         data.setdefault("Demographic", "")
@@ -139,11 +139,11 @@ def scrape_show_page(url, mal_id, forum_data):
     except Exception as e:
         logger.error(f"Show page scraping failed for {url}: {e}")
         data = forum_data.copy()
-        data["LastChecked"] = datetime.utcnow().isoformat()  # Ensure LastChecked on failure
+        data["LastChecked"] = datetime.utcnow().isoformat()
         return data
 
 def load_existing_metadata():
-    """Load existing metadata to preserve DateAdded."""
+    """Load existing metadata to preserve DateAdded and LastChecked."""
     if os.path.exists(OUTPUT_FILE):
         with open(OUTPUT_FILE, "r") as f:
             return json.load(f) or {}
@@ -174,14 +174,17 @@ def collect_metadata():
     metadata = {}
     for mal_id, base_data in forum_data.items():
         show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
-        # Preserve DateAdded from existing data
+        # Preserve DateAdded from existing data or set to LastChecked
         show_data["DateAdded"] = existing_metadata.get(mal_id, {}).get("DateAdded", show_data["LastChecked"])
-        # Update LastModified only if data differs
+        # Set LastModified
         old_data = existing_metadata.get(mal_id, {})
-        if old_data and old_data != show_data:
-            show_data["LastModified"] = show_data["LastChecked"]
-        elif "LastModified" not in show_data:
-            show_data["LastModified"] = show_data["LastChecked"]
+        if show_data.get("LastModified") is None:  # No MAL Last Updated
+            if not old_data:  # First run
+                show_data["LastModified"] = f"Before {show_data['DateAdded']}"
+            elif old_data == show_data:  # No changes
+                show_data["LastModified"] = f"Before {old_data['LastChecked']}"
+            else:  # Changes detected
+                show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
         if mal_id in manual_overrides:
             show_data.update(manual_overrides[mal_id])
         metadata[mal_id] = show_data
@@ -217,10 +220,13 @@ if __name__ == "__main__":
             show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
             show_data["DateAdded"] = existing_metadata.get(mal_id, {}).get("DateAdded", show_data["LastChecked"])
             old_data = existing_metadata.get(mal_id, {})
-            if old_data and old_data != show_data:
-                show_data["LastModified"] = show_data["LastChecked"]
-            elif "LastModified" not in show_data:
-                show_data["LastModified"] = show_data["LastChecked"]
+            if show_data.get("LastModified") is None:  # No MAL Last Updated
+                if not old_data:  # First run
+                    show_data["LastModified"] = f"Before {show_data['DateAdded']}"
+                elif old_data == show_data:  # No changes
+                    show_data["LastModified"] = f"Before {old_data['LastChecked']}"
+                else:  # Changes detected
+                    show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
             if mal_id in test_manual:
                 show_data.update(test_manual[mal_id])
             metadata[mal_id] = show_data
