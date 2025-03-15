@@ -104,10 +104,11 @@ def scrape_show_page(url, mal_id, forum_data):
             elif key == "Broadcast":
                 data[key] = value.split(" (")[0]  # Remove timezone
             elif key == "Source":
-                if isinstance(next_elem, NavigableString):
-                    data[key] = value
-                elif next_elem and next_elem.find("a"):
+                logger.debug(f"Source next_elem type: {type(next_elem)}, content: {next_elem}")
+                if next_elem and hasattr(next_elem, "find") and next_elem.find("a"):
                     data[key] = next_elem.find("a").text.strip()
+                elif isinstance(next_elem, NavigableString) and value:
+                    data[key] = value
                 else:
                     data[key] = ""
             elif key == "Theme":
@@ -163,6 +164,13 @@ def save_metadata(metadata):
         json.dump(metadata, f, indent=2)
     logger.info(f"Saved metadata to {OUTPUT_FILE}")
 
+def compare_data(old_data, new_data):
+    """Compare data excluding dynamic fields like LastChecked."""
+    exclude_keys = ["LastChecked", "Hash"]  # Hash can vary slightly due to order
+    old_copy = {k: v for k, v in old_data.items() if k not in exclude_keys}
+    new_copy = {k: v for k, v in new_data.items() if k not in exclude_keys}
+    return old_copy == new_copy
+
 def collect_metadata():
     """Collect and merge metadata from forum and show pages."""
     forum_data = scrape_forum_post()
@@ -181,7 +189,7 @@ def collect_metadata():
         if show_data.get("LastModified") is None:  # No MAL Last Updated
             if not old_data:  # First run
                 show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-            elif old_data == show_data:  # No changes
+            elif compare_data(old_data, show_data):  # No changes
                 show_data["LastModified"] = f"Before {old_data['LastChecked']}"
             else:  # Changes detected
                 show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
@@ -199,7 +207,7 @@ if __name__ == "__main__":
             "57891": {
                 "ShowName": "Loner Life in Another World",
                 "ShowLink": "https://myanimelist.net/anime/57891/Hitoribocchi_no_Isekai_Kouryaku",
-                "LatestEpisode": 4,
+                "LatestEpisode": 4,  # Static test data, not updated dynamically yet
                 "TotalEpisodes": 12,
                 "AirDay": "Wednesday",
                 "MAL_ID": "57891"
@@ -223,12 +231,12 @@ if __name__ == "__main__":
             if show_data.get("LastModified") is None:  # No MAL Last Updated
                 if not old_data:  # First run
                     show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-                elif old_data == show_data:  # No changes
+                elif compare_data(old_data, show_data):  # No changes
                     show_data["LastModified"] = f"Before {old_data['LastChecked']}"
                 else:  # Changes detected
                     show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
-            if mal_id in test_manual:
-                show_data.update(test_manual[mal_id])
+            if mal_id in manual_overrides:
+                show_data.update(manual_overrides[mal_id])
             metadata[mal_id] = show_data
         save_metadata(metadata)
     else:
