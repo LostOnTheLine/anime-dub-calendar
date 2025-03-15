@@ -1,5 +1,5 @@
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 import re
 import json
 import os
@@ -87,12 +87,13 @@ def scrape_show_page(url, mal_id, forum_data):
 
         data = forum_data.copy()
         now = datetime.utcnow().isoformat()
-        data["LastChecked"] = now
+        data["LastChecked"] = now  # Set early to ensure it’s always present
 
         for span in info.find_all("span", {"class": "dark_text"}):
             key = span.text.strip(":")
             next_elem = span.next_sibling
-            value = next_elem.strip() if next_elem else ""
+            value = next_elem.strip() if isinstance(next_elem, NavigableString) else ""
+            logger.debug(f"Parsing {key}: next_elem={next_elem}, value={value}")
             if key == "Studios":
                 data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
             elif key == "Genres":
@@ -103,7 +104,12 @@ def scrape_show_page(url, mal_id, forum_data):
             elif key == "Broadcast":
                 data[key] = value.split(" (")[0]  # Remove timezone
             elif key == "Source":
-                data[key] = next_elem.find("a").text.strip() if next_elem.find("a") else value
+                if isinstance(next_elem, NavigableString):
+                    data[key] = value
+                elif next_elem and next_elem.find("a"):
+                    data[key] = next_elem.find("a").text.strip()
+                else:
+                    data[key] = ""
             elif key == "Theme":  # Singular "Theme"
                 data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
             elif key == "Duration":
@@ -132,7 +138,9 @@ def scrape_show_page(url, mal_id, forum_data):
         return data
     except Exception as e:
         logger.error(f"Show page scraping failed for {url}: {e}")
-        return forum_data
+        data = forum_data.copy()
+        data["LastChecked"] = datetime.utcnow().isoformat()  # Ensure LastChecked on failure
+        return data
 
 def load_existing_metadata():
     """Load existing metadata to preserve DateAdded."""
