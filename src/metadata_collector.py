@@ -6,7 +6,7 @@ import os
 import logging
 from datetime import datetime
 import hashlib
-import yaml  # Add PyYAML for parsing .yaml files
+import yaml
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 FORUM_URL = "https://myanimelist.net/forum/?topicid=1692966"
 DATA_DIR = "/data"
 OUTPUT_FILE = os.path.join(DATA_DIR, "metadata.json")
-MANUAL_FILE = os.path.join(DATA_DIR, "manual_overrides.yaml")  # Changed to .yaml
+MANUAL_FILE = os.path.join(DATA_DIR, "manual_overrides.yaml")
 
 def get_cour_from_premiered(premiered_text):
     """Convert premiered text (e.g., 'Fall 2024') to cour format (e.g., '2024-Q4')."""
@@ -90,7 +90,7 @@ def scrape_show_page(url, mal_id, forum_data):
 
         data = forum_data.copy()
         now = datetime.utcnow().isoformat()
-        data["LastChecked"] = now  # Current run time
+        data["LastChecked"] = now
 
         for span in info.find_all("span", {"class": "dark_text"}):
             key = span.text.strip(":")
@@ -109,9 +109,8 @@ def scrape_show_page(url, mal_id, forum_data):
                 data["Premiered"] = premiered_text
                 data["Cour"] = get_cour_from_premiered(premiered_text) if premiered_text else ""
             elif key == "Broadcast":
-                data[key] = value.split(" (")[0]  # Remove timezone
+                data[key] = value.split(" (")[0]
             elif key == "Source":
-                logger.debug(f"Source next_elem type: {type(next_elem)}, content: {next_elem}")
                 next_a = span.find_next("a")
                 if next_a:
                     data[key] = next_a.text.strip()
@@ -128,7 +127,6 @@ def scrape_show_page(url, mal_id, forum_data):
             elif key == "Demographic":
                 data[key] = "|".join(sorted(a.text for a in span.find_next_siblings("a")))
 
-        # Streaming platforms
         broadcasts = soup.find_all("a", {"class": "broadcast-item"})
         if broadcasts:
             data["Streaming"] = "|".join(sorted(
@@ -136,16 +134,13 @@ def scrape_show_page(url, mal_id, forum_data):
                 for b in broadcasts
             ))
 
-        # LastModified from MAL's "Last Updated" if available
         last_updated = soup.find("div", {"class": "updatesBar"})
         if last_updated and "Last Updated" in last_updated.text:
             data["LastModified"] = last_updated.text.split("Last Updated ")[1].strip()
         else:
-            data["LastModified"] = None  # Will be set later based on changes
+            data["LastModified"] = None
 
-        # Ensure Demographic is always present
         data.setdefault("Demographic", "")
-
         data["Hash"] = compute_hash(mal_id)
         return data
     except Exception as e:
@@ -166,7 +161,6 @@ def load_manual_overrides():
     if os.path.exists(MANUAL_FILE):
         with open(MANUAL_FILE, "r") as f:
             data = yaml.safe_load(f) or {}
-            # Convert keys to strings if they aren't already (YAML might parse as int)
             return {str(k): v for k, v in data.items()}
     return {}
 
@@ -200,12 +194,12 @@ def collect_metadata():
         show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
         show_data["DateAdded"] = existing_metadata.get(mal_id, {}).get("DateAdded", show_data["LastChecked"])
         old_data = existing_metadata.get(mal_id, {})
-        if show_data.get("LastModified") is None:  # No MAL Last Updated
-            if not old_data:  # First run
+        if show_data.get("LastModified") is None:
+            if not old_data:
                 show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-            elif compare_data(old_data, show_data):  # No changes in MAL fields
-                show_data["LastModified"] = old_data["LastModified"]  # Preserve previous LastModified
-            else:  # Changes detected in MAL fields
+            elif compare_data(old_data, show_data):
+                show_data["LastModified"] = old_data["LastModified"]
+            else:
                 show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
         if mal_id in manual_overrides:
             show_data.update(manual_overrides[mal_id])
@@ -215,35 +209,4 @@ def collect_metadata():
     return metadata
 
 if __name__ == "__main__":
-    if os.getenv("TEST_MODE", "false").lower() == "true":
-        # Test with known data
-        test_forum_data = {
-            "57891": {
-                "ShowName": "Loner Life in Another World",
-                "ShowLink": "https://myanimelist.net/anime/57891/Hitoribocchi_no_Isekai_Kouryaku",
-                "LatestEpisode": 4,
-                "TotalEpisodes": 12,
-                "AirDay": "Wednesday",
-                "MAL_ID": "57891"
-            }
-        }
-        manual_overrides = load_manual_overrides()  # Load from YAML
-        existing_metadata = load_existing_metadata()
-        metadata = {}
-        for mal_id, base_data in test_forum_data.items():
-            show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
-            show_data["DateAdded"] = existing_metadata.get(mal_id, {}).get("DateAdded", show_data["LastChecked"])
-            old_data = existing_metadata.get(mal_id, {})
-            if show_data.get("LastModified") is None:  # No MAL Last Updated
-                if not old_data:  # First run
-                    show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-                elif compare_data(old_data, show_data):  # No changes in MAL fields
-                    show_data["LastModified"] = old_data["LastModified"]  # Preserve previous LastModified
-                else:  # Changes detected in MAL fields
-                    show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
-            if mal_id in manual_overrides:
-                show_data.update(manual_overrides[mal_id])
-            metadata[mal_id] = show_data
-        save_metadata(metadata)
-    else:
-        collect_metadata()
+    collect_metadata()
