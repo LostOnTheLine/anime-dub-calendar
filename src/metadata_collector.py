@@ -201,7 +201,7 @@ def collect_metadata():
             if not old_data:  # First run
                 show_data["LastModified"] = f"Before {show_data['DateAdded']}"
             elif compare_data(old_data, show_data):  # No changes in MAL fields
-                show_data["LastModified"] = f"Before {old_data['LastChecked']}"
+                show_data["LastModified"] = old_data["LastModified"]  # Preserve previous LastModified
             else:  # Changes detected in MAL fields
                 show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
         if mal_id in manual_overrides:
@@ -243,7 +243,7 @@ if __name__ == "__main__":
                 if not old_data:  # First run
                     show_data["LastModified"] = f"Before {show_data['DateAdded']}"
                 elif compare_data(old_data, show_data):  # No changes in MAL fields
-                    show_data["LastModified"] = f"Before {old_data['LastChecked']}"
+                    show_data["LastModified"] = old_data["LastModified"]  # Preserve previous LastModified
                 else:  # Changes detected in MAL fields
                     show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
             if mal_id in test_manual:
