@@ -105,7 +105,7 @@ def scrape_show_page(url, mal_id, forum_data):
                 data[key] = value.split(" (")[0]  # Remove timezone
             elif key == "Source":
                 logger.debug(f"Source next_elem type: {type(next_elem)}, content: {next_elem}")
-                next_a = span.find_next("a")  # Look for the next <a> tag directly
+                next_a = span.find_next("a")
                 if next_a:
                     data[key] = next_a.text.strip()
                 elif isinstance(next_elem, NavigableString) and value:
@@ -124,7 +124,10 @@ def scrape_show_page(url, mal_id, forum_data):
         # Streaming platforms
         broadcasts = soup.find_all("a", {"class": "broadcast-item"})
         if broadcasts:
-            data["Streaming"] = "|".join(b.find("div", {"class": "caption"}).text for b in broadcasts if b.find("div", {"class": "caption"}))
+            data["Streaming"] = "|".join(
+                b.find("div", {"class": "caption"}).text if b.find("div", {"class": "caption"}) else ""
+                for b in broadcasts
+            )
 
         # LastModified from MAL's "Last Updated" if available
         last_updated = soup.find("div", {"class": "updatesBar"})
