@@ -6,6 +6,7 @@ import os
 import logging
 from datetime import datetime
 import hashlib
+import yaml  # Add PyYAML for parsing .yaml files
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 FORUM_URL = "https://myanimelist.net/forum/?topicid=1692966"
 DATA_DIR = "/data"
 OUTPUT_FILE = os.path.join(DATA_DIR, "metadata.json")
-MANUAL_FILE = os.path.join(DATA_DIR, "manual_overrides.json")
+MANUAL_FILE = os.path.join(DATA_DIR, "manual_overrides.yaml")  # Changed to .yaml
 
 def get_cour_from_premiered(premiered_text):
     """Convert premiered text (e.g., 'Fall 2024') to cour format (e.g., '2024-Q4')."""
@@ -161,10 +162,12 @@ def load_existing_metadata():
     return {}
 
 def load_manual_overrides():
-    """Load manual overrides from file."""
+    """Load manual overrides from YAML file."""
     if os.path.exists(MANUAL_FILE):
         with open(MANUAL_FILE, "r") as f:
-            return json.load(f) or {}
+            data = yaml.safe_load(f) or {}
+            # Convert keys to strings if they aren't already (YAML might parse as int)
+            return {str(k): v for k, v in data.items()}
     return {}
 
 def save_metadata(metadata):
@@ -224,15 +227,7 @@ if __name__ == "__main__":
                 "MAL_ID": "57891"
             }
         }
-        test_manual = {
-            "57891": {
-                "Emoji": "🐭",
-                "DubStream": "DisneyNow",
-                "EventColor": "Tangerine"
-            }
-        }
-        with open(MANUAL_FILE, "w") as f:
-            json.dump(test_manual, f)
+        manual_overrides = load_manual_overrides()  # Load from YAML
         existing_metadata = load_existing_metadata()
         metadata = {}
         for mal_id, base_data in test_forum_data.items():
@@ -246,8 +241,8 @@ if __name__ == "__main__":
                     show_data["LastModified"] = old_data["LastModified"]  # Preserve previous LastModified
                 else:  # Changes detected in MAL fields
                     show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
-            if mal_id in test_manual:
-                show_data.update(test_manual[mal_id])
+            if mal_id in manual_overrides:
+                show_data.update(manual_overrides[mal_id])
             metadata[mal_id] = show_data
         save_metadata(metadata)
     else:
