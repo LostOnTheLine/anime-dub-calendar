@@ -15,22 +15,24 @@ DATA_DIR = "/data"
 OUTPUT_FILE = os.path.join(DATA_DIR, "metadata.json")
 MANUAL_FILE = os.path.join(DATA_DIR, "manual_overrides.json")
 
-def get_season_quarter(date_str):
-    """Convert aired date to season quarter (e.g., 'Oct 4, 2024' -> '2024-Q4')."""
+def get_cour_from_premiered(premiered_text):
+    """Convert premiered text (e.g., 'Fall 2024') to cour format (e.g., '2024-Q4')."""
     try:
-        start_date = datetime.strptime(date_str.split(" to ")[0], "%b %d, %Y")
-        month = start_date.month
-        year = start_date.year
-        if month in [1, 2, 3]:
-            return f"{year}-Q1"  # Winter
-        elif month in [4, 5, 6]:
-            return f"{year}-Q2"  # Spring
-        elif month in [7, 8, 9]:
-            return f"{year}-Q3"  # Summer
-        elif month in [10, 11, 12]:
-            return f"{year}-Q4"  # Fall
+        season, year = premiered_text.split()
+        year = int(year)
+        if season.lower() == "winter":
+            return f"{year}-Q1"
+        elif season.lower() == "spring":
+            return f"{year}-Q2"
+        elif season.lower() == "summer":
+            return f"{year}-Q3"
+        elif season.lower() == "fall":
+            return f"{year}-Q4"
+        else:
+            logger.error(f"Unknown season in premiered text: {season}")
+            return ""
     except Exception as e:
-        logger.error(f"Failed to parse season quarter from {date_str}: {e}")
+        logger.error(f"Failed to parse cour from {premiered_text}: {e}")
         return ""
 
 def compute_hash(identifier):
@@ -95,12 +97,16 @@ def scrape_show_page(url, mal_id, forum_data):
             value = next_elem.strip() if isinstance(next_elem, NavigableString) else ""
             logger.debug(f"Parsing {key}: next_elem={next_elem}, value={value}")
             if key == "Studios":
-                data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
+                data[key] = "|".join(sorted(a.text for a in span.find_next_siblings("a")))
             elif key == "Genres":
-                data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
+                data[key] = "|".join(sorted(a.text for a in span.find_next_siblings("a")))
             elif key == "Aired":
                 data[key] = value
-                data["Premiered"] = get_season_quarter(value)
+            elif key == "Premiered":
+                next_a = span.find_next("a")
+                premiered_text = next_a.text.strip() if next_a else ""
+                data["Premiered"] = premiered_text
+                data["Cour"] = get_cour_from_premiered(premiered_text) if premiered_text else ""
             elif key == "Broadcast":
                 data[key] = value.split(" (")[0]  # Remove timezone
             elif key == "Source":
@@ -113,21 +119,21 @@ def scrape_show_page(url, mal_id, forum_data):
                 else:
                     data[key] = ""
             elif key == "Theme":
-                data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
+                data[key] = "|".join(sorted(a.text for a in span.find_next_siblings("a")))
             elif key == "Duration":
                 data[key] = value
             elif key == "Rating":
                 data[key] = value
             elif key == "Demographic":
-                data[key] = "|".join(a.text for a in span.find_next_siblings("a"))
+                data[key] = "|".join(sorted(a.text for a in span.find_next_siblings("a")))
 
         # Streaming platforms
         broadcasts = soup.find_all("a", {"class": "broadcast-item"})
         if broadcasts:
-            data["Streaming"] = "|".join(
+            data["Streaming"] = "|".join(sorted(
                 b.find("div", {"class": "caption"}).text if b.find("div", {"class": "caption"}) else ""
                 for b in broadcasts
-            )
+            ))
 
         # LastModified from MAL's "Last Updated" if available
         last_updated = soup.find("div", {"class": "updatesBar"})
@@ -169,11 +175,14 @@ def save_metadata(metadata):
     logger.info(f"Saved metadata to {OUTPUT_FILE}")
 
 def compare_data(old_data, new_data):
-    """Compare data excluding dynamic fields like LastChecked."""
-    exclude_keys = ["LastChecked", "Hash"]
-    old_copy = {k: v for k, v in old_data.items() if k not in exclude_keys}
-    new_copy = {k: v for k, v in new_data.items() if k not in exclude_keys}
-    return old_copy == new_copy
+    """Compare only fields pulled from MAL page."""
+    mal_fields = ["ShowLink", "Aired", "Broadcast", "Studios", "Source", "Genres", 
+                  "Theme", "Duration", "Rating", "Streaming", "Demographic"]
+    old_copy = {k: old_data.get(k, "") for k in mal_fields}
+    new_copy = {k: new_data.get(k, "") for k in mal_fields}
+    are_equal = old_copy == new_copy
+    logger.debug(f"Comparing old_data and new_data: equal={are_equal}, old={old_copy}, new={new_copy}")
+    return are_equal
 
 def collect_metadata():
     """Collect and merge metadata from forum and show pages."""
@@ -191,9 +200,9 @@ def collect_metadata():
         if show_data.get("LastModified") is None:  # No MAL Last Updated
             if not old_data:  # First run
                 show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-            elif compare_data(old_data, show_data):  # No changes
+            elif compare_data(old_data, show_data):  # No changes in MAL fields
                 show_data["LastModified"] = f"Before {old_data['LastChecked']}"
-            else:  # Changes detected
+            else:  # Changes detected in MAL fields
                 show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
         if mal_id in manual_overrides:
             show_data.update(manual_overrides[mal_id])
@@ -233,11 +242,11 @@ if __name__ == "__main__":
             if show_data.get("LastModified") is None:  # No MAL Last Updated
                 if not old_data:  # First run
                     show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-                elif compare_data(old_data, show_data):  # No changes
+                elif compare_data(old_data, show_data):  # No changes in MAL fields
                     show_data["LastModified"] = f"Before {old_data['LastChecked']}"
-                else:  # Changes detected
+                else:  # Changes detected in MAL fields
                     show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
-            if mal_id in test_manual:  # Use test_manual directly
+            if mal_id in test_manual:
                 show_data.update(test_manual[mal_id])
             metadata[mal_id] = show_data
         save_metadata(metadata)
