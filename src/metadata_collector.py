@@ -87,39 +87,46 @@ def scrape_forum_post():
 
         logger.debug(f"Forum post HTML: {str(td)[:500]}...")
         
-        current_day = None
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        
-        # Iterate through all elements in the <td>
-        for element in td.children:
-            if isinstance(element, NavigableString):
-                text = element.strip()
-                if text in days:
-                    current_day = text
-            elif element.name == "ul":
-                for li in element.find_all("li", recursive=False):
-                    if not current_day:
-                        continue  # Skip if no day is set yet
-                    a_tag = li.find("a", href=True)
-                    if a_tag and "myanimelist.net/anime/" in a_tag["href"]:
-                        title = a_tag.text.strip()
-                        url = a_tag["href"]
-                        mal_id = url.split("/")[4]
-                        # Extract episode info from text after the <a> tag
-                        episode_text = li.text.replace(title, "").strip()
-                        match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
-                        if match:
-                            ep_current, ep_total = match.groups()
-                            notes = "**" if "**" in episode_text else ""
-                            metadata[mal_id] = {
-                                "ShowName": title,
-                                "ShowLink": url,
-                                "LatestEpisode": int(ep_current),
-                                "TotalEpisodes": int(ep_total) if ep_total and ep_total.isdigit() else None,
-                                "AirDay": current_day,
-                                "MAL_ID": mal_id,
-                                "Notes": notes
-                            }
+        outer_ul = td.find("ul")
+        if not outer_ul:
+            logger.error("No outer <ul> found in forum post")
+            return {}, upcoming_dub_modified, upcoming_dub_modified_by
+
+        for li in outer_ul.find_all("li", recursive=False):
+            # Extract day from the <li> text
+            li_text = li.text.strip()
+            current_day = None
+            for day in days:
+                if day in li_text:
+                    current_day = day
+                    break
+            
+            if current_day:
+                # Find nested <ul> for shows under this day
+                nested_ul = li.find("ul")
+                if nested_ul:
+                    for show_li in nested_ul.find_all("li", recursive=False):
+                        a_tag = show_li.find("a", href=True)
+                        if a_tag and "myanimelist.net/anime/" in a_tag["href"]:
+                            title = a_tag.text.strip()
+                            url = a_tag["href"]
+                            mal_id = url.split("/")[4]
+                            # Extract episode info from text after the <a> tag
+                            episode_text = show_li.text.replace(title, "").strip()
+                            match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
+                            if match:
+                                ep_current, ep_total = match.groups()
+                                notes = "**" if "**" in episode_text else ""
+                                metadata[mal_id] = {
+                                    "ShowName": title,
+                                    "ShowLink": url,
+                                    "LatestEpisode": int(ep_current),
+                                    "TotalEpisodes": int(ep_total) if ep_total and ep_total.isdigit() else None,
+                                    "AirDay": current_day,
+                                    "MAL_ID": mal_id,
+                                    "Notes": notes
+                                }
 
         logger.info(f"Scraped {len(metadata)} shows from forum")
         return metadata, upcoming_dub_modified, upcoming_dub_modified_by
