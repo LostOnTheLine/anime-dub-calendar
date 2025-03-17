@@ -12,12 +12,12 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 FORUM_URL = "https://myanimelist.net/forum/?topicid=1692966"
+MAL_SEARCH_URL = "https://myanimelist.net/anime.php?q={}&cat=anime"
 DATA_DIR = "/data"
 OUTPUT_FILE = os.path.join(DATA_DIR, "metadata.json")
 MANUAL_FILE = os.path.join(DATA_DIR, "manual_overrides.yaml")
 
 def get_cour_from_premiered(premiered_text):
-    """Convert premiered text (e.g., 'Fall 2024') to cour format (e.g., '2024-Q4')."""
     try:
         season, year = premiered_text.split()
         year = int(year)
@@ -37,7 +37,6 @@ def get_cour_from_premiered(premiered_text):
         return ""
 
 def get_cour_from_date(date_str):
-    """Convert a date (e.g., '2025-03-16') to cour format (e.g., '2025-Q1')."""
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
         month = dt.month
@@ -55,21 +54,34 @@ def get_cour_from_date(date_str):
         return ""
 
 def compute_hash(identifier):
-    """Generate a hash for color assignment."""
     return hashlib.md5(identifier.encode()).hexdigest()
 
+def search_mal_for_show(show_name):
+    try:
+        search_term = show_name.replace(" ", "%20")
+        response = requests.get(MAL_SEARCH_URL.format(search_term))
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html5lib')
+        first_result = soup.find("a", {"class": "hoverinfo_trigger"})
+        if first_result and "myanimelist.net/anime/" in first_result["href"]:
+            mal_id = first_result["href"].split("/")[4]
+            return mal_id, first_result["href"]
+        logger.debug(f"No MAL match found for {show_name}")
+        return None, None
+    except Exception as e:
+        logger.error(f"MAL search failed for {show_name}: {e}")
+        return None, None
+
 def scrape_forum_post():
-    """Scrape the MAL forum post for simulcast anime and metadata using HTML structure."""
     try:
         response = requests.get(FORUM_URL)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html5lib')  # Switch to html5lib for malformed HTML
+        soup = BeautifulSoup(response.text, 'html5lib')
         post = soup.find("div", {"id": "msg53221626"})
         if not post:
             logger.error("Forum post not found")
-            return {}, None, None
+            return {}, None, None, {}
 
-        # Extract forum modification info
         modified_div = post.find("div", {"class": "modified"})
         upcoming_dub_modified = None
         upcoming_dub_modified_by = None
@@ -80,10 +92,11 @@ def scrape_forum_post():
             upcoming_dub_modified_by = mod_user.text.strip() if mod_user else None
 
         metadata = {}
+        upcoming_shows = {}
         td = post.find("td")
         if not td:
             logger.error("No <td> found in forum post")
-            return {}, upcoming_dub_modified, upcoming_dub_modified_by
+            return {}, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows
 
         logger.debug(f"Forum post HTML: {str(td)[:1000]}...")
         
@@ -91,7 +104,7 @@ def scrape_forum_post():
         outer_ul = td.find("ul")
         if not outer_ul:
             logger.error("No outer <ul> found in forum post")
-            return {}, upcoming_dub_modified, upcoming_dub_modified_by
+            return {}, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows
 
         for li in outer_ul.find_all("li", recursive=False):
             li_text = li.text.strip()
@@ -121,7 +134,7 @@ def scrape_forum_post():
                             match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
                             if match:
                                 ep_current, ep_total = match.groups()
-                                notes = "**" if "**" in episode_text else ""
+                                notes = "Dub production suspended until further notice" if "**" in episode_text else ""
                                 metadata[mal_id] = {
                                     "ShowName": title,
                                     "ShowLink": url,
@@ -137,17 +150,53 @@ def scrape_forum_post():
                         else:
                             logger.debug("No valid <a> tag found in show_li")
                     logger.debug(f"Found {show_count} shows under {current_day}")
-                else:
-                    logger.debug(f"No nested <ul> found for {current_day}")
 
-        logger.info(f"Scraped {len(metadata)} shows from forum")
-        return metadata, upcoming_dub_modified, upcoming_dub_modified_by
+        # Parse Upcoming Shows into a temporary dict
+        upcoming_sections = td.find_all("b", string=re.compile(r"Upcoming SimulDubbed Anime|Upcoming Dubbed Anime"))
+        for section in upcoming_sections:
+            section_title = section.text.strip()
+            ul = section.find_next("ul")
+            if not ul:
+                continue
+
+            is_simuldub = "SimulDubbed" in section_title
+            for li in ul.find_all("li", recursive=False):
+                text = li.text.strip()
+                if text == "None" or "* -" in text:
+                    continue
+                date_match = re.search(r" - (.*?)$", text)
+                release_date = date_match.group(1) if date_match else ""
+                show_name = text.replace(f" - {release_date}", "").strip()
+                notes = "Not confirmed" if "*" in text and "theatrical" not in text.lower() else ""
+                if "theatrical releases" in text.lower():
+                    notes = "These are theatrical releases and not home/digital releases"
+                    release_type = "Theatrical"
+                else:
+                    release_type = "SimulDub" if is_simuldub else "Dubbed"
+
+                show_data = {
+                    "ShowName": show_name,
+                    "ReleaseDate": release_date,
+                    "Notes": notes,
+                    "ReleaseType": release_type,
+                    "Hash": compute_hash(show_name)
+                }
+                mal_id_match, detected_match = search_mal_for_show(show_name)
+                if mal_id_match:
+                    show_data["MAL_ID_Match"] = mal_id_match
+                    show_data["Detected_Match"] = detected_match
+                    mal_id = mal_id_match  # Default to detected match
+                    show_data["ShowLink"] = detected_match
+                    show_data["MAL_ID"] = mal_id
+                    upcoming_shows[mal_id] = show_data
+
+        logger.info(f"Scraped {len(metadata)} shows and {len(upcoming_shows)} upcoming shows from forum")
+        return metadata, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows
     except Exception as e:
         logger.error(f"Forum scraping failed: {e}")
-        return {}, None, None
+        return {}, None, None, {}
 
 def scrape_show_page(url, mal_id, forum_data):
-    """Scrape additional metadata from a show's MAL page."""
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -179,13 +228,7 @@ def scrape_show_page(url, mal_id, forum_data):
             elif key == "Broadcast":
                 data[key] = value.split(" (")[0]
             elif key == "Source":
-                next_a = span.find_next("a")
-                if next_a:
-                    data[key] = next_a.text.strip()
-                elif isinstance(next_elem, NavigableString) and value:
-                    data[key] = value
-                else:
-                    data[key] = ""
+                data[key] = value if value else ""
             elif key == "Theme":
                 data[key] = "|".join(sorted(a.text for a in span.find_next_siblings("a")))
             elif key == "Duration":
@@ -218,14 +261,12 @@ def scrape_show_page(url, mal_id, forum_data):
         return data
 
 def load_existing_metadata():
-    """Load existing metadata to preserve DateAdded and LastChecked."""
     if os.path.exists(OUTPUT_FILE):
         with open(OUTPUT_FILE, "r") as f:
             return json.load(f) or {}
     return {}
 
 def load_manual_overrides():
-    """Load manual overrides from YAML file."""
     if os.path.exists(MANUAL_FILE):
         with open(MANUAL_FILE, "r") as f:
             data = yaml.safe_load(f) or {}
@@ -233,14 +274,12 @@ def load_manual_overrides():
     return {}
 
 def save_metadata(metadata):
-    """Save metadata to JSON file."""
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(OUTPUT_FILE, "w") as f:
         json.dump(metadata, f, indent=2)
     logger.info(f"Saved metadata to {OUTPUT_FILE}")
 
 def compare_data(old_data, new_data):
-    """Compare only fields pulled from MAL page."""
     mal_fields = ["ShowLink", "Aired", "Broadcast", "Studios", "Source", "Genres", 
                   "Theme", "Duration", "Rating", "Streaming", "Demographic"]
     old_copy = {k: old_data.get(k, "") for k in mal_fields}
@@ -250,16 +289,22 @@ def compare_data(old_data, new_data):
     return are_equal
 
 def get_dub_season(existing_data, new_data, current_time):
-    """Determine DubSeason based on when LatestEpisode first became 1."""
     if "DubSeason" in existing_data:
         return existing_data["DubSeason"]
-    if new_data["LatestEpisode"] == 1:
-        return get_cour_from_date(current_time.split("T")[0])  # Use date part of ISO timestamp
-    return ""  # Default until episode 1 is detected
+    # For currently streaming, use LatestEpisode == 1
+    if "LatestEpisode" in new_data and new_data["LatestEpisode"] == 1:
+        return get_cour_from_date(current_time.split("T")[0])
+    # For upcoming shows, use ReleaseDate if present
+    if "ReleaseDate" in new_data and new_data["ReleaseDate"]:
+        try:
+            release_date = datetime.strptime(new_data["ReleaseDate"], "%B %d, %Y")
+            return get_cour_from_date(release_date.strftime("%Y-%m-%d"))
+        except ValueError:
+            logger.debug(f"Could not parse ReleaseDate: {new_data['ReleaseDate']}")
+    return ""
 
 def collect_metadata():
-    """Collect and merge metadata from forum and show pages."""
-    forum_data, upcoming_dub_modified, upcoming_dub_modified_by = scrape_forum_post()
+    forum_data, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows = scrape_forum_post()
     now = datetime.utcnow().isoformat()
 
     existing_metadata = load_existing_metadata()
@@ -277,7 +322,7 @@ def collect_metadata():
         }
     }
 
-    # Process shows found in the forum
+    # Process currently streaming shows
     for mal_id, base_data in forum_data.items():
         show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
         old_data = existing_metadata.get(mal_id, {})
@@ -291,13 +336,47 @@ def collect_metadata():
             else:
                 show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
         if mal_id in manual_overrides:
-            show_data.update(manual_overrides[mal_id])
+            override = manual_overrides[mal_id]
+            if "streaming" in override:
+                show_data["DubStreaming"] = override["streaming"]
+            # Apply other overrides, but don’t touch Streaming
+            show_data.update({k: v for k, v in override.items() if k != "streaming"})
+        metadata[mal_id] = show_data
+
+    # Process upcoming shows into main metadata
+    for mal_id, base_data in upcoming_shows.items():
+        if mal_id in manual_overrides:
+            override = manual_overrides[mal_id]
+            if "MAL_ID" in override:
+                mal_id = override["MAL_ID"]
+                base_data["MAL_ID"] = mal_id
+                base_data["ShowLink"] = f"https://myanimelist.net/anime/{mal_id}"
+            base_data.update({k: v for k, v in override.items() if k != "MAL_ID" and k != "streaming"})
+            if "streaming" in override:
+                base_data["DubStreaming"] = override["streaming"]
+        
+        # Scrape MAL page, but preserve forum-sourced fields
+        show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
+        old_data = existing_metadata.get(mal_id, {})
+        show_data["DateAdded"] = old_data.get("DateAdded", show_data["LastChecked"])
+        show_data["DubSeason"] = get_dub_season(old_data, base_data, now)
+        if show_data.get("LastModified") is None:
+            if not old_data:
+                show_data["LastModified"] = f"Before {show_data['DateAdded']}"
+            elif compare_data(old_data, show_data):
+                show_data["LastModified"] = old_data["LastModified"]
+            else:
+                show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
+        # Preserve forum-sourced fields
+        for field in ["ShowName", "Notes", "ReleaseType", "ReleaseDate"]:
+            if field in base_data:
+                show_data[field] = base_data[field]
         metadata[mal_id] = show_data
 
     # Handle existing shows not in forum
     not_on_list_fields = ["ShowName", "ShowLink", "LatestEpisode", "TotalEpisodes", "AirDay"]
     for mal_id, old_data in existing_metadata.items():
-        if mal_id != "UpcomingDubbedAnime" and mal_id not in forum_data:
+        if mal_id != "UpcomingDubbedAnime" and mal_id not in forum_data and mal_id not in upcoming_shows:
             show_data = old_data.copy()
             for field in not_on_list_fields:
                 show_data[field] = "NOT ON UPCOMING DUB LIST"
