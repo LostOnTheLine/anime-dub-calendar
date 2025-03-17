@@ -59,7 +59,7 @@ def compute_hash(identifier):
     return hashlib.md5(identifier.encode()).hexdigest()
 
 def scrape_forum_post():
-    """Scrape the MAL forum post for simulcast anime and metadata."""
+    """Scrape the MAL forum post for simulcast anime and metadata using HTML structure."""
     try:
         response = requests.get(FORUM_URL)
         response.raise_for_status()
@@ -80,28 +80,47 @@ def scrape_forum_post():
             upcoming_dub_modified_by = mod_user.text.strip() if mod_user else None
 
         metadata = {}
-        content = post.find("td").text
-        logger.debug(f"Forum post content: {content[:500]}...")
+        td = post.find("td")
+        if not td:
+            logger.error("No <td> found in forum post")
+            return {}, upcoming_dub_modified, upcoming_dub_modified_by
+
+        logger.debug(f"Forum post HTML: {str(td)[:500]}...")
+        
         current_day = None
-        for line in content.split("\n"):
-            line = line.strip()
-            if line in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
-                current_day = line
-            elif line.startswith("<li>") and current_day:
-                match = re.search(r'<a href="(https://myanimelist.net/anime/\d+/[^"]+)" rel="nofollow">([^<]+)</a> \(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', line)
-                if match:
-                    url, title, ep_current, ep_total = match.groups()
-                    mal_id = url.split("/")[4]
-                    notes = "**" if "**" in line else ""
-                    metadata[mal_id] = {
-                        "ShowName": title,
-                        "ShowLink": url,
-                        "LatestEpisode": int(ep_current),
-                        "TotalEpisodes": int(ep_total) if ep_total and ep_total.isdigit() else None,
-                        "AirDay": current_day,
-                        "MAL_ID": mal_id,
-                        "Notes": notes
-                    }
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        
+        # Iterate through all elements in the <td>
+        for element in td.children:
+            if isinstance(element, NavigableString):
+                text = element.strip()
+                if text in days:
+                    current_day = text
+            elif element.name == "ul":
+                for li in element.find_all("li", recursive=False):
+                    if not current_day:
+                        continue  # Skip if no day is set yet
+                    a_tag = li.find("a", href=True)
+                    if a_tag and "myanimelist.net/anime/" in a_tag["href"]:
+                        title = a_tag.text.strip()
+                        url = a_tag["href"]
+                        mal_id = url.split("/")[4]
+                        # Extract episode info from text after the <a> tag
+                        episode_text = li.text.replace(title, "").strip()
+                        match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
+                        if match:
+                            ep_current, ep_total = match.groups()
+                            notes = "**" if "**" in episode_text else ""
+                            metadata[mal_id] = {
+                                "ShowName": title,
+                                "ShowLink": url,
+                                "LatestEpisode": int(ep_current),
+                                "TotalEpisodes": int(ep_total) if ep_total and ep_total.isdigit() else None,
+                                "AirDay": current_day,
+                                "MAL_ID": mal_id,
+                                "Notes": notes
+                            }
+
         logger.info(f"Scraped {len(metadata)} shows from forum")
         return metadata, upcoming_dub_modified, upcoming_dub_modified_by
     except Exception as e:
