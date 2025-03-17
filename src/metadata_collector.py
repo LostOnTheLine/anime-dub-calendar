@@ -63,7 +63,7 @@ def scrape_forum_post():
     try:
         response = requests.get(FORUM_URL)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'lxml')  # Changed to lxml parser
+        soup = BeautifulSoup(response.text, 'html5lib')  # Switch to html5lib for malformed HTML
         post = soup.find("div", {"id": "msg53221626"})
         if not post:
             logger.error("Forum post not found")
