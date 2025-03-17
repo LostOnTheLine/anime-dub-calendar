@@ -103,16 +103,16 @@ def scrape_forum_post():
                     break
             
             if current_day:
-                # Find nested <ul> for shows under this day
+                logger.debug(f"Processing day: {current_day}")
                 nested_ul = li.find("ul")
                 if nested_ul:
+                    show_count = 0
                     for show_li in nested_ul.find_all("li", recursive=False):
                         a_tag = show_li.find("a", href=True)
                         if a_tag and "myanimelist.net/anime/" in a_tag["href"]:
                             title = a_tag.text.strip()
                             url = a_tag["href"]
                             mal_id = url.split("/")[4]
-                            # Extract episode info from text after the <a> tag
                             episode_text = show_li.text.replace(title, "").strip()
                             match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
                             if match:
@@ -127,6 +127,10 @@ def scrape_forum_post():
                                     "MAL_ID": mal_id,
                                     "Notes": notes
                                 }
+                                show_count += 1
+                    logger.debug(f"Found {show_count} shows under {current_day}")
+                else:
+                    logger.debug(f"No nested <ul> found for {current_day}")
 
         logger.info(f"Scraped {len(metadata)} shows from forum")
         return metadata, upcoming_dub_modified, upcoming_dub_modified_by
