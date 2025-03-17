@@ -38,7 +38,9 @@ def get_cour_from_premiered(premiered_text):
 
 def get_cour_from_date(date_str):
     try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        # Remove any trailing * for "Not confirmed"
+        date_str = date_str.rstrip("*").strip()
+        dt = datetime.strptime(date_str, "%B %d, %Y")
         month = dt.month
         year = dt.year
         if month in [1, 2, 3]:
@@ -50,7 +52,7 @@ def get_cour_from_date(date_str):
         elif month in [10, 11, 12]:
             return f"{year}-Q4"
     except Exception as e:
-        logger.error(f"Failed to parse cour from {date_str}: {e}")
+        logger.debug(f"Could not parse date: {date_str} - {e}")
         return ""
 
 def compute_hash(identifier):
@@ -185,10 +187,13 @@ def scrape_forum_post():
                 if mal_id_match:
                     show_data["MAL_ID_Match"] = mal_id_match
                     show_data["Detected_Match"] = detected_match
-                    mal_id = mal_id_match  # Default to detected match
                     show_data["ShowLink"] = detected_match
-                    show_data["MAL_ID"] = mal_id
-                    upcoming_shows[mal_id] = show_data
+                    show_data["MAL_ID"] = mal_id_match  # Default to detected match
+                    upcoming_shows[mal_id_match] = show_data
+                else:
+                    logger.debug(f"No MAL_ID found for upcoming show: {show_name}")
+                    # Use a temporary key based on hash; will need override
+                    upcoming_shows[show_data["Hash"]] = show_data
 
         logger.info(f"Scraped {len(metadata)} shows and {len(upcoming_shows)} upcoming shows from forum")
         return metadata, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows
@@ -296,11 +301,7 @@ def get_dub_season(existing_data, new_data, current_time):
         return get_cour_from_date(current_time.split("T")[0])
     # For upcoming shows, use ReleaseDate if present
     if "ReleaseDate" in new_data and new_data["ReleaseDate"]:
-        try:
-            release_date = datetime.strptime(new_data["ReleaseDate"], "%B %d, %Y")
-            return get_cour_from_date(release_date.strftime("%Y-%m-%d"))
-        except ValueError:
-            logger.debug(f"Could not parse ReleaseDate: {new_data['ReleaseDate']}")
+        return get_cour_from_date(new_data["ReleaseDate"])
     return ""
 
 def collect_metadata():
@@ -339,22 +340,34 @@ def collect_metadata():
             override = manual_overrides[mal_id]
             if "streaming" in override:
                 show_data["DubStreaming"] = override["streaming"]
-            # Apply other overrides, but don’t touch Streaming
             show_data.update({k: v for k, v in override.items() if k != "streaming"})
         metadata[mal_id] = show_data
 
     # Process upcoming shows into main metadata
-    for mal_id, base_data in upcoming_shows.items():
-        if mal_id in manual_overrides:
-            override = manual_overrides[mal_id]
-            if "MAL_ID" in override:
-                mal_id = override["MAL_ID"]
-                base_data["MAL_ID"] = mal_id
-                base_data["ShowLink"] = f"https://myanimelist.net/anime/{mal_id}"
-            base_data.update({k: v for k, v in override.items() if k != "MAL_ID" and k != "streaming"})
+    for temp_id, base_data in upcoming_shows.items():
+        show_name = base_data["ShowName"]
+        # Check manual overrides by MAL_ID or ShowName
+        override = None
+        for key, val in manual_overrides.items():
+            if key == temp_id or ("ShowName" in val and val["ShowName"] == show_name):
+                override = val
+                break
+
+        if override and "MAL_ID" in override:
+            mal_id = override["MAL_ID"]
+            base_data["MAL_ID"] = mal_id
+            base_data["ShowLink"] = f"https://myanimelist.net/anime/{mal_id}"
+        elif "MAL_ID" not in base_data:
+            logger.warning(f"No valid MAL_ID for {show_name}, skipping")
+            continue
+        else:
+            mal_id = base_data["MAL_ID"]
+
+        if override:
             if "streaming" in override:
                 base_data["DubStreaming"] = override["streaming"]
-        
+            base_data.update({k: v for k, v in override.items() if k not in ["MAL_ID", "streaming"]})
+
         # Scrape MAL page, but preserve forum-sourced fields
         show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
         old_data = existing_metadata.get(mal_id, {})
@@ -376,7 +389,7 @@ def collect_metadata():
     # Handle existing shows not in forum
     not_on_list_fields = ["ShowName", "ShowLink", "LatestEpisode", "TotalEpisodes", "AirDay"]
     for mal_id, old_data in existing_metadata.items():
-        if mal_id != "UpcomingDubbedAnime" and mal_id not in forum_data and mal_id not in upcoming_shows:
+        if mal_id != "UpcomingDubbedAnime" and mal_id not in forum_data and mal_id not in [d["MAL_ID"] for d in upcoming_shows.values()]:
             show_data = old_data.copy()
             for field in not_on_list_fields:
                 show_data[field] = "NOT ON UPCOMING DUB LIST"
