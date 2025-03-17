@@ -29,9 +29,7 @@ def get_cour_from_premiered(premiered_text):
             return f"{year}-Q3"
         elif season.lower() == "fall":
             return f"{year}-Q4"
-        else:
-            logger.error(f"Unknown season in premiered text: {season}")
-            return ""
+        return ""
     except Exception as e:
         logger.error(f"Failed to parse cour from {premiered_text}: {e}")
         return ""
@@ -59,7 +57,13 @@ def compute_hash(identifier):
 
 def search_mal_for_show(show_name):
     try:
-        search_term = show_name.replace(" ", "%20")
+        # Special handling for episode batches like "One Piece (Episodes: 1109-1122)"
+        if "(Episodes:" in show_name:
+            base_name = show_name.split(" (Episodes:")[0].strip()
+            search_term = base_name.replace(" ", "%20")
+        else:
+            search_term = show_name.replace(" ", "%20")
+        
         response = requests.get(MAL_SEARCH_URL.format(search_term))
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html5lib')
@@ -162,7 +166,6 @@ def scrape_forum_post():
                     show_data["MAL_ID_Match"] = mal_id_match
                     show_data["Detected_Match"] = detected_match
 
-                # Organize by season if ReleaseDate exists
                 if release_date:
                     cour = get_cour_from_date(release_date)
                     if cour:
@@ -174,7 +177,6 @@ def scrape_forum_post():
                 else:
                     upcoming_shows["UpcomingShows"][section_key].setdefault("NoDate", []).append(show_data)
 
-        logger.info(f"Scraped {len(metadata)} shows and {sum(len(v.get('NoDate', [])) + sum(len(s) for s in v.values() if isinstance(s, list)) for v in upcoming_shows['UpcomingShows'].values())} upcoming shows from forum")
         return metadata, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows
     except Exception as e:
         logger.error(f"Forum scraping failed: {e}")
@@ -192,8 +194,6 @@ def scrape_show_page(url, mal_id, base_data):
 
         data = base_data.copy()
         data["LastChecked"] = datetime.utcnow().isoformat()
-
-        # Scrape MAL title into ShowTitle
         title = soup.find("h1", {"class": "title-name"})
         if title:
             data["ShowTitle"] = title.text.strip()
@@ -240,7 +240,7 @@ def scrape_show_page(url, mal_id, base_data):
             data["LastModified"] = None
 
         data.setdefault("Demographic", "")
-        data["Hash"] = compute_hash(mal_id)
+        data["Hash"] = compute_hash(data["ShowName"])  # Use ShowName for consistency
         return data
     except Exception as e:
         logger.error(f"Show page scraping failed for {url}: {e}")
@@ -324,12 +324,10 @@ def collect_metadata():
         metadata[mal_id] = show_data
 
     # Process upcoming shows
+    all_upcoming_mal_ids = set()
     for section in ["UpcomingSimulDubbed", "UpcomingDubbed"]:
         for cour, shows in upcoming_shows["UpcomingShows"][section].items():
-            if cour == "NoDate":
-                show_list = shows
-            else:
-                show_list = shows
+            show_list = shows
             for base_data in show_list:
                 show_name = base_data["ShowName"]
                 override = next((val for key, val in manual_overrides.items() if key == show_name or ("ShowName" in val and val["ShowName"] == show_name)), None)
@@ -337,14 +335,16 @@ def collect_metadata():
                 if override and "MAL_ID" in override:
                     mal_id = override["MAL_ID"]
                     show_link = f"https://myanimelist.net/anime/{mal_id}"
+                    base_data["MAL_ID"] = mal_id  # Sync override in UpcomingShows
                 elif "MAL_ID_Match" in base_data:
                     mal_id = base_data["MAL_ID_Match"]
                     show_link = base_data["Detected_Match"]
+                    base_data["MAL_ID"] = mal_id
                 else:
                     logger.warning(f"No valid MAL_ID for {show_name}, skipping")
                     continue
 
-                base_data["MAL_ID"] = mal_id
+                all_upcoming_mal_ids.add(mal_id)
                 base_data["ShowLink"] = show_link
                 base_data["LatestEpisode"] = 0
                 base_data["TotalEpisodes"] = None
@@ -368,15 +368,16 @@ def collect_metadata():
                         show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
                 metadata[mal_id] = show_data
 
-    # Handle existing shows not in forum
+    # Handle existing streaming shows not in forum
     not_on_list_fields = ["ShowName", "ShowLink", "LatestEpisode", "TotalEpisodes", "AirDay"]
     for mal_id, old_data in existing_metadata.items():
-        if mal_id != "UpcomingDubbedAnime" and mal_id not in forum_data and mal_id not in [d["MAL_ID"] for s in upcoming_shows["UpcomingShows"].values() for d in s.get("NoDate", []) + sum((s.get(c, []) for c in s if c != "NoDate"), [])]:
-            show_data = old_data.copy()
-            for field in not_on_list_fields:
-                show_data[field] = "NOT ON UPCOMING DUB LIST"
-            show_data["LastChecked"] = now
-            metadata[mal_id] = show_data
+        if mal_id != "UpcomingDubbedAnime" and mal_id not in forum_data and mal_id not in all_upcoming_mal_ids:
+            if "AirDay" in old_data and old_data["AirDay"] != "Upcoming":  # Only streaming shows
+                show_data = old_data.copy()
+                for field in not_on_list_fields:
+                    show_data[field] = "NOT ON UPCOMING DUB LIST"
+                show_data["LastChecked"] = now
+                metadata[mal_id] = show_data
 
     save_metadata(metadata)
     return metadata
