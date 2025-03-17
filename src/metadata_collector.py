@@ -63,7 +63,7 @@ def scrape_forum_post():
     try:
         response = requests.get(FORUM_URL)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(response.text, 'lxml')  # Changed to lxml parser
         post = soup.find("div", {"id": "msg53221626"})
         if not post:
             logger.error("Forum post not found")
@@ -85,7 +85,7 @@ def scrape_forum_post():
             logger.error("No <td> found in forum post")
             return {}, upcoming_dub_modified, upcoming_dub_modified_by
 
-        logger.debug(f"Forum post HTML: {str(td)[:1000]}...")  # Increased for more context
+        logger.debug(f"Forum post HTML: {str(td)[:1000]}...")
         
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         outer_ul = td.find("ul")
@@ -105,6 +105,7 @@ def scrape_forum_post():
                 logger.debug(f"Processing day: {current_day}")
                 nested_ul = li.find("ul")
                 if nested_ul:
+                    logger.debug(f"Nested UL content: {str(nested_ul)[:500]}...")
                     show_count = 0
                     show_lis = nested_ul.find_all("li", recursive=False)
                     logger.debug(f"Found {len(show_lis)} <li> tags under {current_day}")
