@@ -85,7 +85,7 @@ def scrape_forum_post():
             logger.error("No <td> found in forum post")
             return {}, upcoming_dub_modified, upcoming_dub_modified_by
 
-        logger.debug(f"Forum post HTML: {str(td)[:500]}...")
+        logger.debug(f"Forum post HTML: {str(td)[:1000]}...")  # Increased for more context
         
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         outer_ul = td.find("ul")
@@ -94,7 +94,6 @@ def scrape_forum_post():
             return {}, upcoming_dub_modified, upcoming_dub_modified_by
 
         for li in outer_ul.find_all("li", recursive=False):
-            # Extract day from the <li> text
             li_text = li.text.strip()
             current_day = None
             for day in days:
@@ -107,13 +106,17 @@ def scrape_forum_post():
                 nested_ul = li.find("ul")
                 if nested_ul:
                     show_count = 0
-                    for show_li in nested_ul.find_all("li", recursive=False):
+                    show_lis = nested_ul.find_all("li", recursive=False)
+                    logger.debug(f"Found {len(show_lis)} <li> tags under {current_day}")
+                    for show_li in show_lis:
+                        logger.debug(f"Processing show_li: {str(show_li)[:200]}...")
                         a_tag = show_li.find("a", href=True)
                         if a_tag and "myanimelist.net/anime/" in a_tag["href"]:
                             title = a_tag.text.strip()
                             url = a_tag["href"]
                             mal_id = url.split("/")[4]
                             episode_text = show_li.text.replace(title, "").strip()
+                            logger.debug(f"Episode text: {episode_text}")
                             match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
                             if match:
                                 ep_current, ep_total = match.groups()
@@ -128,6 +131,10 @@ def scrape_forum_post():
                                     "Notes": notes
                                 }
                                 show_count += 1
+                            else:
+                                logger.debug(f"No episode match for {title}")
+                        else:
+                            logger.debug("No valid <a> tag found in show_li")
                     logger.debug(f"Found {show_count} shows under {current_day}")
                 else:
                     logger.debug(f"No nested <ul> found for {current_day}")
