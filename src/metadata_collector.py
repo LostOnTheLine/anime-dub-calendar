@@ -7,8 +7,14 @@ import logging
 from datetime import datetime
 import hashlib
 import yaml
+import sys
 
-logging.basicConfig(level=logging.DEBUG)
+# Force logging to stdout and ensure it’s not buffered
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 FORUM_URL = "https://myanimelist.net/forum/?topicid=1692966"
@@ -16,6 +22,9 @@ MAL_SEARCH_URL = "https://myanimelist.net/anime.php?q={}&cat=anime"
 DATA_DIR = "/data"
 OUTPUT_FILE = os.path.join(DATA_DIR, "metadata.json")
 MANUAL_FILE = os.path.join(DATA_DIR, "manual_overrides.yaml")
+
+# Log startup
+logger.debug("Script starting...")
 
 def get_cour_from_premiered(premiered_text):
     try:
@@ -72,6 +81,7 @@ def search_mal_for_show(show_name):
         return None, None
 
 def scrape_forum_post():
+    logger.debug("Starting forum scrape...")
     try:
         response = requests.get(FORUM_URL)
         response.raise_for_status()
@@ -174,12 +184,14 @@ def scrape_forum_post():
                     upcoming_shows[section_key][cour] = []
                 upcoming_shows[section_key][cour].append(show_data)
 
+        logger.debug("Forum scrape completed successfully")
         return simuldubbed_shows, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows
     except Exception as e:
-        logger.error(f"Forum scraping failed: {e}")
+        logger.error(f"Forum scraping failed: {e}", exc_info=True)
         return {}, None, None, {"UpcomingSimulDubbed": {}, "UpcomingDubbed": {}}
 
 def scrape_show_page(url, mal_id, base_data):
+    logger.debug(f"Scraping show page: {url}")
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -240,29 +252,43 @@ def scrape_show_page(url, mal_id, base_data):
         data["Hash"] = compute_hash(data["ShowName"])
         return data
     except Exception as e:
-        logger.error(f"Show page scraping failed for {url}: {e}")
+        logger.error(f"Show page scraping failed for {url}: {e}", exc_info=True)
         data = base_data.copy()
         data["LastChecked"] = datetime.utcnow().isoformat()
         return data
 
 def load_existing_metadata():
-    if os.path.exists(OUTPUT_FILE):
-        with open(OUTPUT_FILE, "r") as f:
-            return json.load(f) or {}
-    return {}
+    logger.debug(f"Loading existing metadata from {OUTPUT_FILE}")
+    try:
+        if os.path.exists(OUTPUT_FILE):
+            with open(OUTPUT_FILE, "r") as f:
+                return json.load(f) or {}
+        return {}
+    except Exception as e:
+        logger.error(f"Failed to load metadata: {e}", exc_info=True)
+        return {}
 
 def load_manual_overrides():
-    if os.path.exists(MANUAL_FILE):
-        with open(MANUAL_FILE, "r") as f:
-            data = yaml.safe_load(f) or {}
-            return {str(k): v for k, v in data.items()}
-    return {}
+    logger.debug(f"Loading manual overrides from {MANUAL_FILE}")
+    try:
+        if os.path.exists(MANUAL_FILE):
+            with open(MANUAL_FILE, "r") as f:
+                data = yaml.safe_load(f) or {}
+                return {str(k): v for k, v in data.items()}
+        return {}
+    except Exception as e:
+        logger.error(f"Failed to load manual overrides: {e}", exc_info=True)
+        return {}
 
 def save_metadata(metadata):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(metadata, f, indent=2)
-    logger.info(f"Saved metadata to {OUTPUT_FILE}")
+    logger.debug("Saving metadata...")
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(OUTPUT_FILE, "w") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"Saved metadata to {OUTPUT_FILE}")
+    except Exception as e:
+        logger.error(f"Failed to save metadata: {e}", exc_info=True)
 
 def compare_data(old_data, new_data):
     mal_fields = ["ShowLink", "Aired", "Broadcast", "Studios", "Source", "Genres", 
@@ -281,106 +307,127 @@ def get_dub_season(existing_data, new_data, current_time):
     return ""
 
 def collect_metadata():
-    simuldubbed_shows, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows = scrape_forum_post()
-    now = datetime.utcnow().isoformat()
+    logger.debug("Starting metadata collection...")
+    try:
+        simuldubbed_shows, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows = scrape_forum_post()
+        logger.debug("Forum data scraped")
+        now = datetime.utcnow().isoformat()
 
-    existing_metadata = load_existing_metadata()
-    manual_overrides = load_manual_overrides()
-    metadata = {
-        "UpcomingDubbedAnime": {
-            "UpcomingDubChecked": now,
-            "UpcomingDubModified": upcoming_dub_modified or "Unknown",
-            "UpcomingDubModifiedBy": upcoming_dub_modified_by or "Unknown",
-            "UpcomingShows": upcoming_shows
-        },
-        "ShowMetadata": {
-            "CurrentlyStreaming": {
-                "SimulDubbed": {
-                    "Total": len(simuldubbed_shows)
-                }
+        existing_metadata = load_existing_metadata()
+        logger.debug("Existing metadata loaded")
+        manual_overrides = load_manual_overrides()
+        logger.debug("Manual overrides loaded")
+        metadata = {
+            "UpcomingDubbedAnime": {
+                "UpcomingDubChecked": now,
+                "UpcomingDubModified": upcoming_dub_modified or "Unknown",
+                "UpcomingDubModifiedBy": upcoming_dub_modified_by or "Unknown",
+                "UpcomingShows": upcoming_shows
             },
-            "UpcomingShows": {
-                "UpcomingSimulDubbed": {},
-                "UpcomingDubbed": {}
+            "ShowMetadata": {
+                "CurrentlyStreaming": {
+                    "SimulDubbed": {
+                        "Total": len(simuldubbed_shows)
+                    }
+                },
+                "UpcomingShows": {
+                    "UpcomingSimulDubbed": {},
+                    "UpcomingDubbed": {}
+                }
             }
         }
-    }
+        logger.debug("Metadata structure initialized")
 
-    # Apply overrides to UpcomingShows
-    for section in ["UpcomingSimulDubbed", "UpcomingDubbed"]:
-        for cour, shows in upcoming_shows[section].items():
-            for show_data in shows:
-                show_name = show_data["ShowName"]
-                override = next((val for key, val in manual_overrides.items() if key == show_name), None)
-                if override and "Override_MAL_ID" in override:
-                    show_data["Override_MAL_ID"] = override["Override_MAL_ID"]
+        # Apply overrides to UpcomingShows
+        for section in ["UpcomingSimulDubbed", "UpcomingDubbed"]:
+            for cour, shows in upcoming_shows[section].items():
+                for show_data in shows:
+                    show_name = show_data["ShowName"]
+                    override = next((val for key, val in manual_overrides.items() if key == show_name), None)
+                    if override and "Override_MAL_ID" in override:
+                        show_data["Override_MAL_ID"] = override["Override_MAL_ID"]
 
-    # Process SimulDubbed metadata
-    for mal_id, base_data in simuldubbed_shows.items():
-        show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
-        old_data = existing_metadata.get("ShowMetadata", {}).get("CurrentlyStreaming", {}).get("SimulDubbed", {}).get(mal_id, {})
-        show_data["DateAdded"] = old_data.get("DateAdded", show_data["LastChecked"])
-        show_data["DubSeason"] = get_dub_season(old_data, base_data, now)
-        if show_data.get("LastModified") is None:
-            if not old_data:
-                show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-            elif compare_data(old_data, show_data):
-                show_data["LastModified"] = old_data["LastModified"]
-            else:
-                show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
-        if mal_id in manual_overrides:
-            override = manual_overrides[mal_id]
-            if "DubStreaming" in override:
-                show_data["DubStreaming"] = override["DubStreaming"]
-            show_data.update({k: v for k, v in override.items() if k not in ["DubStreaming", "Override_MAL_ID"]})
-        metadata["ShowMetadata"]["CurrentlyStreaming"]["SimulDubbed"][mal_id] = show_data
-
-    # Process Upcoming metadata
-    for section in ["UpcomingSimulDubbed", "UpcomingDubbed"]:
-        for cour, shows in upcoming_shows[section].items():
-            for base_data in shows:
-                show_name = base_data["ShowName"]
-                override = next((val for key, val in manual_overrides.items() if key == show_name), None)
-                mal_id = override.get("Override_MAL_ID", base_data.get("MAL_ID_Match", "")) if override else base_data.get("MAL_ID_Match", "")
-                if not mal_id:
-                    continue  # Skip if no MAL_ID available
-                show_link = f"https://myanimelist.net/anime/{mal_id}"
-
-                base_data_full = base_data.copy()
-                base_data_full["ShowLink"] = show_link
-                base_data_full["LatestEpisode"] = 0
-                base_data_full["TotalEpisodes"] = None
-                base_data_full["AirDay"] = "Upcoming"
-                base_data_full["MAL_ID"] = mal_id
-
-                if override and "DubStreaming" in override:
-                    base_data_full["DubStreaming"] = override["DubStreaming"]
-
-                show_data = scrape_show_page(show_link, mal_id, base_data_full)
-                # Adjusted lookup to include cour
-                old_data = existing_metadata.get("ShowMetadata", {}).get("UpcomingShows", {}).get(section, {}).get(cour, {}).get(mal_id, {})
-                show_data["DateAdded"] = old_data.get("DateAdded", show_data["LastChecked"])
-                show_data["DubSeason"] = get_dub_season(old_data, base_data_full, now)
-                if show_data.get("LastModified") is None:
-                    if not old_data:
-                        show_data["LastModified"] = f"Before {show_data['DateAdded']}"
-                    elif compare_data(old_data, show_data):
-                        show_data["LastModified"] = old_data["LastModified"]
-                    else:
-                        show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
-                if cour not in metadata["ShowMetadata"]["UpcomingShows"][section]:
-                    metadata["ShowMetadata"]["UpcomingShows"][section][cour] = {}
-                metadata["ShowMetadata"]["UpcomingShows"][section][cour][mal_id] = show_data
-
-    # Handle existing SimulDubbed shows not in forum
-    not_on_list_fields = ["ShowName", "ShowLink", "LatestEpisode", "TotalEpisodes", "AirDay"]
-    for mal_id, old_data in existing_metadata.get("ShowMetadata", {}).get("CurrentlyStreaming", {}).get("SimulDubbed", {}).items():
-        if mal_id not in simuldubbed_shows:
-            show_data = old_data.copy()
-            for field in not_on_list_fields:
-                show_data[field] = "NOT ON UPCOMING DUB LIST"
-            show_data["LastChecked"] = now
+        # Process SimulDubbed metadata
+        logger.debug("Processing SimulDubbed shows...")
+        for mal_id, base_data in simuldubbed_shows.items():
+            show_data = scrape_show_page(base_data["ShowLink"], mal_id, base_data)
+            old_data = existing_metadata.get("ShowMetadata", {}).get("CurrentlyStreaming", {}).get("SimulDubbed", {}).get(mal_id, {})
+            show_data["DateAdded"] = old_data.get("DateAdded", show_data["LastChecked"])
+            show_data["DubSeason"] = get_dub_season(old_data, base_data, now)
+            if show_data.get("LastModified") is None:
+                if not old_data:
+                    show_data["LastModified"] = f"Before {show_data['DateAdded']}"
+                elif compare_data(old_data, show_data):
+                    show_data["LastModified"] = old_data["LastModified"]
+                else:
+                    show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
+            if mal_id in manual_overrides:
+                override = manual_overrides[mal_id]
+                if "DubStreaming" in override:
+                    show_data["DubStreaming"] = override["DubStreaming"]
+                show_data.update({k: v for k, v in override.items() if k not in ["DubStreaming", "Override_MAL_ID"]})
             metadata["ShowMetadata"]["CurrentlyStreaming"]["SimulDubbed"][mal_id] = show_data
 
-    save_metadata(metadata)
-    return metadata
+        # Process Upcoming metadata
+        logger.debug("Processing Upcoming shows...")
+        for section in ["UpcomingSimulDubbed", "UpcomingDubbed"]:
+            for cour, shows in upcoming_shows[section].items():
+                for base_data in shows:
+                    show_name = base_data["ShowName"]
+                    override = next((val for key, val in manual_overrides.items() if key == show_name), None)
+                    mal_id = override.get("Override_MAL_ID", base_data.get("MAL_ID_Match", "")) if override else base_data.get("MAL_ID_Match", "")
+                    if not mal_id:
+                        continue  # Skip if no MAL_ID available
+                    show_link = f"https://myanimelist.net/anime/{mal_id}"
+
+                    base_data_full = base_data.copy()
+                    base_data_full["ShowLink"] = show_link
+                    base_data_full["LatestEpisode"] = 0
+                    base_data_full["TotalEpisodes"] = None
+                    base_data_full["AirDay"] = "Upcoming"
+                    base_data_full["MAL_ID"] = mal_id
+
+                    if override and "DubStreaming" in override:
+                        base_data_full["DubStreaming"] = override["DubStreaming"]
+
+                    show_data = scrape_show_page(show_link, mal_id, base_data_full)
+                    old_data = existing_metadata.get("ShowMetadata", {}).get("UpcomingShows", {}).get(section, {}).get(cour, {}).get(mal_id, {})
+                    show_data["DateAdded"] = old_data.get("DateAdded", show_data["LastChecked"])
+                    show_data["DubSeason"] = get_dub_season(old_data, base_data_full, now)
+                    if show_data.get("LastModified") is None:
+                        if not old_data:
+                            show_data["LastModified"] = f"Before {show_data['DateAdded']}"
+                        elif compare_data(old_data, show_data):
+                            show_data["LastModified"] = old_data["LastModified"]
+                        else:
+                            show_data["LastModified"] = f"Between {old_data['LastChecked']} and {show_data['LastChecked']}"
+                    if cour not in metadata["ShowMetadata"]["UpcomingShows"][section]:
+                        metadata["ShowMetadata"]["UpcomingShows"][section][cour] = {}
+                    metadata["ShowMetadata"]["UpcomingShows"][section][cour][mal_id] = show_data
+
+        # Handle existing SimulDubbed shows not in forum
+        logger.debug("Handling shows not in forum list...")
+        not_on_list_fields = ["ShowName", "ShowLink", "LatestEpisode", "TotalEpisodes", "AirDay"]
+        for mal_id, old_data in existing_metadata.get("ShowMetadata", {}).get("CurrentlyStreaming", {}).get("SimulDubbed", {}).items():
+            if mal_id not in simuldubbed_shows:
+                show_data = old_data.copy()
+                for field in not_on_list_fields:
+                    show_data[field] = "NOT ON UPCOMING DUB LIST"
+                show_data["LastChecked"] = now
+                metadata["ShowMetadata"]["CurrentlyStreaming"]["SimulDubbed"][mal_id] = show_data
+
+        save_metadata(metadata)
+        logger.debug("Metadata collection completed")
+        return metadata
+    except Exception as e:
+        logger.error(f"Metadata collection failed: {e}", exc_info=True)
+        raise  # Re-raise to ensure container logs the failure
+
+if __name__ == "__main__":
+    logger.debug("Main execution block entered")
+    try:
+        collect_metadata()
+        logger.debug("Script completed successfully")
+    except Exception as e:
+        logger.error(f"Script failed: {e}", exc_info=True)
+        sys.exit(1)  # Explicit exit with failure code
