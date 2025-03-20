@@ -357,7 +357,8 @@ def collect_metadata():
                     base_data_full["DubStreaming"] = override["DubStreaming"]
 
                 show_data = scrape_show_page(show_link, mal_id, base_data_full)
-                old_data = existing_metadata.get("ShowMetadata", {}).get("UpcomingShows", {}).get(section, {}).get(mal_id, {})
+                # Adjusted lookup to include cour
+                old_data = existing_metadata.get("ShowMetadata", {}).get("UpcomingShows", {}).get(section, {}).get(cour, {}).get(mal_id, {})
                 show_data["DateAdded"] = old_data.get("DateAdded", show_data["LastChecked"])
                 show_data["DubSeason"] = get_dub_season(old_data, base_data_full, now)
                 if show_data.get("LastModified") is None:
@@ -383,6 +384,3 @@ def collect_metadata():
 
     save_metadata(metadata)
     return metadata
-
-if __name__ == "__main__":
-    collect_metadata()
