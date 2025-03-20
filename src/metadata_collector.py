@@ -94,45 +94,48 @@ def scrape_forum_post():
 
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         outer_ul = td.find("ul")
-        if not outer_ul:
-            logger.error("No outer <ul> found in forum post")
-            return {}, upcoming_dub_modified, upcoming_dub_modified_by, upcoming_shows
+        if outer_ul:
+            # Parse currently streaming shows (SimulDubbed)
+            for li in outer_ul.find_all("li", recursive=False):
+                li_text = li.text.strip()
+                current_day = next((day for day in days if day in li_text), None)
+                if current_day:
+                    nested_ul = li.find("ul")
+                    if nested_ul:
+                        for show_li in nested_ul.find_all("li", recursive=False):
+                            a_tag = show_li.find("a", href=True)
+                            if a_tag and "myanimelist.net/anime/" in a_tag["href"]:
+                                show_name = a_tag.text.strip()
+                                url = a_tag["href"]
+                                mal_id = url.split("/")[4]
+                                episode_text = show_li.text.replace(show_name, "").strip()
+                                match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
+                                if match:
+                                    ep_current, ep_total = match.groups()
+                                    notes = "Dub production suspended until further notice" if "**" in episode_text else ""
+                                    simuldubbed_shows[mal_id] = {
+                                        "ShowName": show_name,
+                                        "ShowLink": url,
+                                        "LatestEpisode": int(ep_current),
+                                        "TotalEpisodes": int(ep_total) if ep_total and ep_total.isdigit() else None,
+                                        "AirDay": current_day,
+                                        "MAL_ID": mal_id,
+                                        "Notes": notes
+                                    }
 
-        # Parse currently streaming shows (SimulDubbed)
-        for li in outer_ul.find_all("li", recursive=False):
-            li_text = li.text.strip()
-            current_day = next((day for day in days if day in li_text), None)
-            if current_day:
-                nested_ul = li.find("ul")
-                if nested_ul:
-                    for show_li in nested_ul.find_all("li", recursive=False):
-                        a_tag = show_li.find("a", href=True)
-                        if a_tag and "myanimelist.net/anime/" in a_tag["href"]:
-                            show_name = a_tag.text.strip()
-                            url = a_tag["href"]
-                            mal_id = url.split("/")[4]
-                            episode_text = show_li.text.replace(show_name, "").strip()
-                            match = re.search(r'\(Episodes: (\d+)(?:/(\d+|\?+|\w+))?\)(?:\s*\*\*)?', episode_text)
-                            if match:
-                                ep_current, ep_total = match.groups()
-                                notes = "Dub production suspended until further notice" if "**" in episode_text else ""
-                                simuldubbed_shows[mal_id] = {
-                                    "ShowName": show_name,
-                                    "ShowLink": url,
-                                    "LatestEpisode": int(ep_current),
-                                    "TotalEpisodes": int(ep_total) if ep_total and ep_total.isdigit() else None,
-                                    "AirDay": current_day,
-                                    "MAL_ID": mal_id,
-                                    "Notes": notes
-                                }
-
-        # Parse upcoming shows (raw data only)
+        # Parse upcoming shows with section-specific notes
         upcoming_sections = td.find_all("b", string=re.compile(r"Upcoming SimulDubbed Anime|Upcoming Dubbed Anime"))
         for section in upcoming_sections:
             section_title = section.text.strip()
             ul = section.find_next("ul")
             if not ul:
                 continue
+
+            # Extract the note tag specific to this section
+            note_tag = ""
+            last_li = ul.find_all("li", recursive=False)[-1]
+            if "* -" in last_li.text:
+                note_tag = last_li.text.strip()
 
             is_simuldub = "SimulDubbed" in section_title
             section_key = "UpcomingSimulDubbed" if is_simuldub else "UpcomingDubbed"
@@ -147,10 +150,9 @@ def scrape_forum_post():
                 episode_match = re.search(r"\(Episodes: (\d+-\d+)\)", show_text)
                 show_name = re.sub(r"\s*\(Episodes: \d+-\d+\)", "", show_text).strip()
                 episode_range = episode_match.group(1) if episode_match else None
-                notes = "* - Not confirmed" if "*" in release_date and "theatrical" not in text.lower() else ""
-                release_type = "Theatrical" if "theatrical releases" in text.lower() else ("SimulDub" if is_simuldub else "Dubbed")
-                if "theatrical releases" in text.lower():
-                    notes = "* - These are theatrical releases and not home/digital releases."
+                has_asterisk = "*" in release_date or "*" in show_name
+                notes = note_tag if has_asterisk and note_tag else ""
+                release_type = "SimulDub" if is_simuldub else "Dubbed"
 
                 show_data = {
                     "ShowName": show_name,
