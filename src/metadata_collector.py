@@ -408,7 +408,10 @@ def collect_metadata():
         # Handle existing SimulDubbed shows not in forum
         logger.debug("Handling shows not in forum list...")
         not_on_list_fields = ["ShowName", "ShowLink", "LatestEpisode", "TotalEpisodes", "AirDay"]
-        for mal_id, old_data in existing_metadata.get("ShowMetadata", {}).get("CurrentlyStreaming", {}).get("SimulDubbed", {}).items():
+        simul_dubbed_data = existing_metadata.get("ShowMetadata", {}).get("CurrentlyStreaming", {}).get("SimulDubbed", {})
+        for mal_id, old_data in simul_dubbed_data.items():
+            if not mal_id.isdigit():  # Skip non-MAL-ID keys like "Total"
+                continue
             if mal_id not in simuldubbed_shows:
                 show_data = old_data.copy()
                 for field in not_on_list_fields:
@@ -422,12 +425,3 @@ def collect_metadata():
     except Exception as e:
         logger.error(f"Metadata collection failed: {e}", exc_info=True)
         raise  # Re-raise to ensure container logs the failure
-
-if __name__ == "__main__":
-    logger.debug("Main execution block entered")
-    try:
-        collect_metadata()
-        logger.debug("Script completed successfully")
-    except Exception as e:
-        logger.error(f"Script failed: {e}", exc_info=True)
-        sys.exit(1)  # Explicit exit with failure code
