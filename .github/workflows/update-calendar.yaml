@@ -2,7 +2,7 @@ name: Update Anime Dub Calendar
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # 8:00 AM UTC daily
+    - cron: '0 8 1 1 1'  # 8:00 AM UTC daily '0 8 * * *' #Updated to prevent broken runs 
   workflow_dispatch:  # Manual trigger
 
 jobs:
