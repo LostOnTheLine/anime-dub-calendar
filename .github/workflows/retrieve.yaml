@@ -1,8 +1,23 @@
-- name: Debug Secret
-  run: echo "$GOOGLE_CREDENTIALS" > creds.json
-  env:
-    GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-- uses: actions/upload-artifact@v3
-  with:
-    name: credentials
-    path: creds.json
+name: Debug Secret
+
+on:
+ # schedule:
+ #   - cron: '0 8 1 1 1'  # 8:00 AM UTC daily '0 8 * * *' #Updated to prevent broken runs 
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  update-calendar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Debug Secret
+        run: echo "$GOOGLE_CREDENTIALS" > creds.json
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      - uses: actions/upload-artifact@v3
+        with:
+          name: credentials
+          path: creds.json
+
+
+
+
