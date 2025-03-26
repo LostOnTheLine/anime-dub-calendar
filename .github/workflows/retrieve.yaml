@@ -1,4 +1,4 @@
-name: Update Anime Dub Calendar
+name: Fetch
 
 on:
 #  schedule:
