@@ -1,0 +1,8 @@
+- name: Debug Secret
+  run: echo "$GOOGLE_CREDENTIALS" > creds.json
+  env:
+    GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+- uses: actions/upload-artifact@v3
+  with:
+    name: credentials
+    path: creds.json
