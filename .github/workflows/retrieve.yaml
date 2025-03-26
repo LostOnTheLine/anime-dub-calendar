@@ -29,4 +29,4 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
           echo "$GOOGLE_CREDENTIALS" | base64 -d > credentials.json
-        #  rm credentials.json  # Remove temp file to avoid exposure
+          rm credentials.json  # Remove temp file to avoid exposure
